@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    container_name: stopsmoke-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Moscow

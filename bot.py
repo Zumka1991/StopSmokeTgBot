@@ -1,0 +1,726 @@
+import asyncio
+import logging
+import os
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+import database as db
+from keyboards import (
+    get_main_keyboard,
+    get_start_keyboard,
+    get_settings_keyboard,
+    get_confirm_reset_keyboard,
+    get_relapse_keyboard,
+    get_number_keyboard,
+    get_price_keyboard,
+    get_back_keyboard
+)
+from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден! Создайте файл .env с токеном бота.")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
+
+
+def format_duration(delta: timedelta) -> str:
+    """Форматирование длительности"""
+    total_seconds = int(delta.total_seconds())
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+
+    parts = []
+    if days > 0:
+        days_word = "день" if days == 1 else "дней" if days > 4 else "дня"
+        parts.append(f"{days} {days_word}")
+    if hours > 0:
+        hours_word = "час" if hours == 1 else "часов" if hours > 4 else "часа"
+        parts.append(f"{hours} {hours_word}")
+    if minutes > 0 and days == 0:
+        min_word = "минута" if minutes == 1 else "минут" if minutes > 4 else "минуты"
+        parts.append(f"{minutes} {min_word}")
+
+    return " ".join(parts) if parts else "меньше минуты"
+
+
+def calculate_savings(user: dict, delta: timedelta) -> float:
+    """Расчёт сэкономленных денег"""
+    days = delta.total_seconds() / 86400
+    cigarettes_not_smoked = days * user.get("cigarettes_per_day", 20)
+    packs_not_bought = cigarettes_not_smoked / user.get("cigarettes_in_pack", 20)
+    return packs_not_bought * user.get("price_per_pack", 150)
+
+
+def calculate_cigarettes_not_smoked(user: dict, delta: timedelta) -> int:
+    """Расчёт невыкуренных сигарет"""
+    days = delta.total_seconds() / 86400
+    return int(days * user.get("cigarettes_per_day", 20))
+
+
+def get_progress_bar(percent: float, length: int = 10) -> str:
+    """Создание прогресс-бара"""
+    filled = int(percent / 100 * length)
+    empty = length - filled
+    return "▓" * filled + "░" * empty
+
+
+# ============ КОМАНДЫ ============
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Обработка команды /start"""
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    first_name = message.from_user.first_name or "Друг"
+
+    is_new = await db.add_user(user_id, username, first_name)
+    user = await db.get_user(user_id)
+
+    if is_new or not user.get("quit_date"):
+        welcome_text = f"""
+🚭 *Добро пожаловать в StopSmoke Bot!*
+
+Привет, *{first_name}*! 👋
+
+Я помогу тебе бросить курить и отслеживать прогресс.
+
+📊 *Что я умею:*
+• Считать дни без сигарет
+• Показывать сэкономленные деньги
+• Отправлять ежедневную мотивацию
+• Вести рейтинг с другими участниками
+• Отмечать твои достижения
+
+Готов начать путь к здоровой жизни?
+"""
+        await message.answer(
+            welcome_text,
+            reply_markup=get_start_keyboard()
+        )
+    else:
+        await message.answer(
+            f"С возвращением, *{first_name}*! 💪\n\n"
+            "Используй кнопки ниже для навигации.",
+            reply_markup=get_main_keyboard()
+        )
+
+
+@dp.message(Command("help"))
+@dp.message(F.text == "❓ Помощь")
+async def cmd_help(message: Message):
+    """Помощь"""
+    help_text = """
+🚭 *StopSmoke Bot — Помощь*
+
+*Основные команды:*
+/start — Начать использование бота
+/progress — Показать прогресс
+/rating — Таблица лидеров
+/motivation — Получить мотивацию
+/settings — Настройки
+/help — Эта справка
+
+*Кнопки меню:*
+📊 *Мой прогресс* — статистика вашего пути
+🏆 *Рейтинг* — соревнование с другими
+💪 *Мотивация* — вдохновляющие цитаты
+🎯 *Достижения* — ваши награды
+⚙️ *Настройки* — персонализация
+
+*Как это работает:*
+1. Укажите дату отказа от курения
+2. Бот считает время без сигарет
+3. Каждый день приходит мотивация
+4. Зарабатывайте достижения
+5. Соревнуйтесь с другими!
+
+💡 *Совет:* Если сорвались — не сдавайтесь!
+Просто начните заново в настройках.
+"""
+    await message.answer(help_text)
+
+
+@dp.message(Command("progress"))
+@dp.message(F.text == "📊 Мой прогресс")
+async def cmd_progress(message: Message):
+    """Показать прогресс"""
+    user = await db.get_user(message.from_user.id)
+
+    if not user:
+        await message.answer(
+            "Сначала начните с команды /start",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    if not user.get("quit_date"):
+        await message.answer(
+            "Вы ещё не указали дату отказа от курения!\n"
+            "Нажмите кнопку ниже, чтобы начать.",
+            reply_markup=get_start_keyboard()
+        )
+        return
+
+    quit_date = datetime.fromisoformat(user["quit_date"])
+    now = datetime.now()
+    delta = now - quit_date
+
+    duration = format_duration(delta)
+    savings = calculate_savings(user, delta)
+    cigarettes = calculate_cigarettes_not_smoked(user, delta)
+
+    # Прогресс до следующей вехи (условно до 1 года)
+    days_total = delta.days
+    next_milestone = 365
+    progress_percent = min(100, (days_total / next_milestone) * 100)
+    progress_bar = get_progress_bar(progress_percent)
+
+    stats = await db.get_user_stats(message.from_user.id)
+
+    progress_text = f"""
+📊 *Ваш прогресс*
+
+🕐 *Без сигарет:* {duration}
+📅 *Дата отказа:* {quit_date.strftime("%d.%m.%Y")}
+
+━━━━━━━━━━━━━━━━━━━━
+
+💰 *Сэкономлено:* {savings:,.0f}₽
+🚬 *Не выкурено:* {cigarettes:,} сигарет
+⏱ *Сэкономлено времени:* ~{cigarettes * 5} мин
+
+━━━━━━━━━━━━━━━━━━━━
+
+📈 *Прогресс до 1 года:*
+{progress_bar} {progress_percent:.1f}%
+
+🔄 *Попыток:* {stats.get('relapse_count', 0) + 1}
+
+━━━━━━━━━━━━━━━━━━━━
+
+💪 *Продолжайте в том же духе!*
+"""
+    await message.answer(progress_text, reply_markup=get_relapse_keyboard())
+
+
+@dp.message(Command("rating"))
+@dp.message(F.text == "🏆 Рейтинг")
+async def cmd_rating(message: Message):
+    """Показать рейтинг"""
+    leaderboard = await db.get_leaderboard(10)
+
+    if not leaderboard:
+        await message.answer(
+            "🏆 *Рейтинг пока пуст*\n\n"
+            "Станьте первым участником!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    current_user_id = message.from_user.id
+    rating_text = "🏆 *Таблица лидеров*\n\n"
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    for i, user in enumerate(leaderboard):
+        quit_date = datetime.fromisoformat(user["quit_date"])
+        delta = datetime.now() - quit_date
+        duration = format_duration(delta)
+
+        medal = medals[i] if i < 3 else f"{i + 1}."
+        name = user.get("first_name") or user.get("username") or "Аноним"
+
+        is_current = "👈" if user["user_id"] == current_user_id else ""
+
+        rating_text += f"{medal} *{name}* — {duration} {is_current}\n"
+
+    rating_text += "\n💪 _Чем дольше без сигарет — тем выше в рейтинге!_"
+
+    await message.answer(rating_text, reply_markup=get_main_keyboard())
+
+
+@dp.message(Command("motivation"))
+@dp.message(F.text == "💪 Мотивация")
+async def cmd_motivation(message: Message):
+    """Получить мотивацию"""
+    quote = get_random_quote()
+    await message.answer(
+        f"💫 *Мотивация дня:*\n\n{quote}",
+        reply_markup=get_main_keyboard()
+    )
+
+
+@dp.message(F.text == "🎯 Достижения")
+async def cmd_achievements(message: Message):
+    """Показать достижения"""
+    user = await db.get_user(message.from_user.id)
+
+    if not user or not user.get("quit_date"):
+        await message.answer(
+            "Сначала укажите дату отказа от курения!",
+            reply_markup=get_start_keyboard()
+        )
+        return
+
+    quit_date = datetime.fromisoformat(user["quit_date"])
+    delta = datetime.now() - quit_date
+    total_minutes = delta.total_seconds() / 60
+
+    # Определяем полученные достижения
+    thresholds = [
+        (60, "1_hour"),
+        (720, "12_hours"),
+        (1440, "1_day"),
+        (2880, "2_days"),
+        (4320, "3_days"),
+        (10080, "1_week"),
+        (20160, "2_weeks"),
+        (43200, "1_month"),
+        (129600, "3_months"),
+        (259200, "6_months"),
+        (525600, "1_year"),
+        (1051200, "2_years"),
+        (2628000, "5_years"),
+        (5256000, "10_years"),
+    ]
+
+    earned = []
+    upcoming = []
+
+    for threshold, key in thresholds:
+        if total_minutes >= threshold:
+            earned.append(ACHIEVEMENT_MESSAGES[key].split("\n")[0])
+        elif len(upcoming) < 3:
+            upcoming.append(ACHIEVEMENT_MESSAGES[key].split("\n")[0].replace("🏅", "🔒").replace("🥉", "🔒").replace("🥈", "🔒").replace("🥇", "🔒").replace("🏆", "🔒").replace("👑", "🔒").replace("💎", "🔒"))
+
+    achievements_text = "🎯 *Ваши достижения*\n\n"
+
+    if earned:
+        achievements_text += "*Получены:*\n"
+        for ach in earned:
+            achievements_text += f"{ach}\n"
+    else:
+        achievements_text += "_Пока нет достижений. Продолжайте!_\n"
+
+    if upcoming:
+        achievements_text += "\n*Следующие:*\n"
+        for ach in upcoming:
+            achievements_text += f"{ach}\n"
+
+    achievements_text += f"\n📊 _Всего достижений: {len(earned)}/{len(thresholds)}_"
+
+    await message.answer(achievements_text, reply_markup=get_main_keyboard())
+
+
+@dp.message(Command("settings"))
+@dp.message(F.text == "⚙️ Настройки")
+async def cmd_settings(message: Message):
+    """Настройки"""
+    user = await db.get_user(message.from_user.id)
+
+    if not user:
+        await message.answer(
+            "Сначала начните с команды /start",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    quit_date_str = "Не установлена"
+    if user.get("quit_date"):
+        quit_date = datetime.fromisoformat(user["quit_date"])
+        quit_date_str = quit_date.strftime("%d.%m.%Y")
+
+    settings_text = f"""
+⚙️ *Настройки*
+
+📅 Дата отказа: *{quit_date_str}*
+🚬 Сигарет в день: *{user.get('cigarettes_per_day', 20)}*
+💵 Цена пачки: *{user.get('price_per_pack', 150):.0f}₽*
+📦 Сигарет в пачке: *{user.get('cigarettes_in_pack', 20)}*
+🔔 Уведомления: *{'Включены' if notifications else 'Выключены'}*
+
+_Нажмите кнопку для изменения:_
+"""
+    await message.answer(
+        settings_text,
+        reply_markup=get_settings_keyboard(notifications)
+    )
+
+
+# ============ CALLBACK HANDLERS ============
+
+@dp.callback_query(F.data == "start_now")
+async def callback_start_now(callback: CallbackQuery):
+    """Начать прямо сейчас"""
+    user_id = callback.from_user.id
+    await db.set_quit_date(user_id, datetime.now())
+
+    await callback.message.edit_text(
+        "🎉 *Отлично! Ваш путь начался!*\n\n"
+        f"📅 Дата старта: *{datetime.now().strftime('%d.%m.%Y %H:%M')}*\n\n"
+        "Я буду отправлять вам ежедневную мотивацию "
+        "и отслеживать ваш прогресс.\n\n"
+        "💪 *Вы справитесь!*"
+    )
+    await callback.message.answer(
+        "Используйте кнопки для навигации:",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "choose_date")
+async def callback_choose_date(callback: CallbackQuery):
+    """Выбор даты (упрощённо — сегодня)"""
+    await callback.message.edit_text(
+        "📅 *Выбор даты*\n\n"
+        "Введите дату в формате ДД.ММ.ГГГГ\n"
+        "Например: 01.12.2024\n\n"
+        "Или нажмите кнопку ниже, чтобы начать сегодня.",
+        reply_markup=get_start_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "set_quit_date")
+async def callback_set_quit_date(callback: CallbackQuery):
+    """Установка даты отказа"""
+    user = await db.get_user(callback.from_user.id)
+    current_date = ""
+    if user and user.get("quit_date"):
+        quit_date = datetime.fromisoformat(user["quit_date"])
+        current_date = f"\n\n📅 Текущая дата: *{quit_date.strftime('%d.%m.%Y')}*"
+
+    await callback.message.edit_text(
+        f"📅 *Установка даты отказа от курения*\n\n"
+        f"Введите дату в формате ДД.ММ.ГГГГ\n"
+        f"Например: 01.12.2024{current_date}",
+        reply_markup=get_back_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "toggle_notifications")
+async def callback_toggle_notifications(callback: CallbackQuery):
+    """Переключение уведомлений"""
+    user = await db.get_user(callback.from_user.id)
+    current = bool(user.get("notifications_enabled", 1))
+    new_state = not current
+
+    await db.toggle_notifications(callback.from_user.id, new_state)
+
+    status = "включены 🔔" if new_state else "выключены 🔕"
+    await callback.answer(f"Уведомления {status}")
+
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=get_settings_keyboard(new_state)
+    )
+
+
+@dp.callback_query(F.data == "set_cigarettes")
+async def callback_set_cigarettes(callback: CallbackQuery):
+    """Установка количества сигарет"""
+    await callback.message.edit_text(
+        "🚬 *Сколько сигарет в день вы курили?*\n\n"
+        "Выберите количество:",
+        reply_markup=get_number_keyboard("cig")
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("cig_"))
+async def callback_cig_number(callback: CallbackQuery):
+    """Обработка выбора количества сигарет"""
+    number = int(callback.data.split("_")[1])
+    await db.update_user_settings(callback.from_user.id, cigarettes_per_day=number)
+    await callback.answer(f"Установлено: {number} сигарет в день")
+
+    user = await db.get_user(callback.from_user.id)
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    await callback.message.edit_text(
+        f"✅ Сохранено: *{number} сигарет в день*\n\n"
+        "Вернуться в настройки?",
+        reply_markup=get_back_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "set_price")
+async def callback_set_price(callback: CallbackQuery):
+    """Установка цены пачки"""
+    await callback.message.edit_text(
+        "💵 *Какая цена пачки сигарет?*\n\n"
+        "Выберите примерную стоимость:",
+        reply_markup=get_price_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("price_"))
+async def callback_price_number(callback: CallbackQuery):
+    """Обработка выбора цены"""
+    price = int(callback.data.split("_")[1])
+    await db.update_user_settings(callback.from_user.id, price_per_pack=price)
+    await callback.answer(f"Установлено: {price}₽ за пачку")
+
+    await callback.message.edit_text(
+        f"✅ Сохранено: *{price}₽ за пачку*\n\n"
+        "Вернуться в настройки?",
+        reply_markup=get_back_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "set_pack_size")
+async def callback_set_pack_size(callback: CallbackQuery):
+    """Установка размера пачки"""
+    await callback.message.edit_text(
+        "📦 *Сколько сигарет в пачке?*\n\n"
+        "Выберите количество:",
+        reply_markup=get_number_keyboard("pack")
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("pack_"))
+async def callback_pack_number(callback: CallbackQuery):
+    """Обработка выбора размера пачки"""
+    number = int(callback.data.split("_")[1])
+    await db.update_user_settings(callback.from_user.id, cigarettes_in_pack=number)
+    await callback.answer(f"Установлено: {number} сигарет в пачке")
+
+    await callback.message.edit_text(
+        f"✅ Сохранено: *{number} сигарет в пачке*\n\n"
+        "Вернуться в настройки?",
+        reply_markup=get_back_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "back_to_settings")
+async def callback_back_to_settings(callback: CallbackQuery):
+    """Возврат в настройки"""
+    user = await db.get_user(callback.from_user.id)
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    quit_date_str = "Не установлена"
+    if user.get("quit_date"):
+        quit_date = datetime.fromisoformat(user["quit_date"])
+        quit_date_str = quit_date.strftime("%d.%m.%Y")
+
+    settings_text = f"""
+⚙️ *Настройки*
+
+📅 Дата отказа: *{quit_date_str}*
+🚬 Сигарет в день: *{user.get('cigarettes_per_day', 20)}*
+💵 Цена пачки: *{user.get('price_per_pack', 150):.0f}₽*
+📦 Сигарет в пачке: *{user.get('cigarettes_in_pack', 20)}*
+🔔 Уведомления: *{'Включены' if notifications else 'Выключены'}*
+
+_Нажмите кнопку для изменения:_
+"""
+    await callback.message.edit_text(
+        settings_text,
+        reply_markup=get_settings_keyboard(notifications)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "reset_progress")
+async def callback_reset_progress(callback: CallbackQuery):
+    """Сброс прогресса"""
+    await callback.message.edit_text(
+        "⚠️ *Вы уверены?*\n\n"
+        "Это сбросит ваш текущий прогресс "
+        "и начнёт отсчёт заново.\n\n"
+        "_Статистика срывов сохранится._",
+        reply_markup=get_confirm_reset_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "confirm_reset")
+async def callback_confirm_reset(callback: CallbackQuery):
+    """Подтверждение сброса"""
+    await db.add_relapse(callback.from_user.id, "Сброс прогресса")
+    await db.reset_quit_date(callback.from_user.id)
+
+    await callback.message.edit_text(
+        "🔄 *Прогресс сброшен*\n\n"
+        "Не переживайте! Каждая попытка — это шаг к успеху.\n\n"
+        f"📅 Новая дата старта: *{datetime.now().strftime('%d.%m.%Y %H:%M')}*\n\n"
+        "💪 *В этот раз получится!*"
+    )
+    await callback.message.answer(
+        "Удачи!",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cancel_reset")
+async def callback_cancel_reset(callback: CallbackQuery):
+    """Отмена сброса"""
+    await callback.answer("Отменено! Продолжайте в том же духе! 💪")
+
+    user = await db.get_user(callback.from_user.id)
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    await callback.message.edit_text(
+        "✅ *Отлично!* Продолжайте держаться!\n\n"
+        "Вернуться в настройки?",
+        reply_markup=get_back_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "relapse")
+async def callback_relapse(callback: CallbackQuery):
+    """Обработка срыва"""
+    await callback.message.edit_text(
+        "😔 *Ничего страшного!*\n\n"
+        "Срыв — это не провал, а часть пути.\n"
+        "Многие успешно бросают не с первой попытки.\n\n"
+        "Хотите начать заново?",
+        reply_markup=get_confirm_reset_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "stay_strong")
+async def callback_stay_strong(callback: CallbackQuery):
+    """Держится!"""
+    quote = get_random_quote()
+    await callback.message.edit_text(
+        f"💪 *Отлично! Вы молодец!*\n\n{quote}"
+    )
+    await callback.answer("Так держать! 🎉")
+
+
+# ============ ОБРАБОТКА ТЕКСТА (дата) ============
+
+@dp.message(F.text.regexp(r"^\d{2}\.\d{2}\.\d{4}$"))
+async def handle_date_input(message: Message):
+    """Обработка ввода даты"""
+    try:
+        date = datetime.strptime(message.text, "%d.%m.%Y")
+
+        if date > datetime.now():
+            await message.answer(
+                "❌ Дата не может быть в будущем!",
+                reply_markup=get_main_keyboard()
+            )
+            return
+
+        await db.set_quit_date(message.from_user.id, date)
+
+        delta = datetime.now() - date
+        duration = format_duration(delta)
+
+        await message.answer(
+            f"✅ *Дата установлена!*\n\n"
+            f"📅 Вы бросили: *{date.strftime('%d.%m.%Y')}*\n"
+            f"🕐 Без сигарет: *{duration}*\n\n"
+            "💪 *Отличная работа!*",
+            reply_markup=get_main_keyboard()
+        )
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат даты!\n"
+            "Используйте формат: ДД.ММ.ГГГГ",
+            reply_markup=get_main_keyboard()
+        )
+
+
+# ============ ПЛАНИРОВЩИК ============
+
+async def send_daily_motivation():
+    """Отправка ежедневной мотивации"""
+    users = await db.get_users_with_notifications()
+
+    for user in users:
+        try:
+            quote = get_random_quote()
+
+            quit_date = datetime.fromisoformat(user["quit_date"])
+            delta = datetime.now() - quit_date
+            duration = format_duration(delta)
+            savings = calculate_savings(user, delta)
+
+            message_text = f"""
+🌅 *Доброе утро!*
+
+{quote}
+
+━━━━━━━━━━━━━━━━━━━━
+
+📊 *Ваша статистика:*
+🕐 Без сигарет: *{duration}*
+💰 Сэкономлено: *{savings:,.0f}₽*
+
+💪 *Ещё один день победы!*
+"""
+            await bot.send_message(user["user_id"], message_text)
+            logger.info(f"Отправлена мотивация пользователю {user['user_id']}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки пользователю {user['user_id']}: {e}")
+
+
+# ============ ЗАПУСК ============
+
+async def on_startup():
+    """Действия при запуске"""
+    await db.init_db()
+    logger.info("База данных инициализирована")
+
+    # Ежедневная мотивация в 9:00
+    scheduler.add_job(
+        send_daily_motivation,
+        "cron",
+        hour=9,
+        minute=0,
+        id="daily_motivation"
+    )
+    scheduler.start()
+    logger.info("Планировщик запущен")
+
+
+async def on_shutdown():
+    """Действия при остановке"""
+    scheduler.shutdown()
+    logger.info("Бот остановлен")
+
+
+async def main():
+    """Главная функция"""
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    logger.info("Бот запускается...")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
