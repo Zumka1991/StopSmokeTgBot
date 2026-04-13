@@ -116,6 +116,10 @@ def get_relapse_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="😔 Я сорвался",
                 callback_data="relapse"
+            ),
+            InlineKeyboardButton(
+                text="📤 Поделиться",
+                callback_data="share_result"
             )
         ],
         [
@@ -126,6 +130,40 @@ def get_relapse_keyboard() -> InlineKeyboardMarkup:
         ]
     ])
     return keyboard
+
+
+def get_rating_keyboard(page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
+    """Клавиатура навигации рейтинга"""
+    buttons = []
+    nav_row = []
+
+    if has_prev:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"rating_prev_{page}"
+            )
+        )
+
+    if has_next:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="▶️ Вперёд",
+                callback_data=f"rating_next_{page}"
+            )
+        )
+
+    if nav_row:
+        buttons.append(nav_row)
+
+    buttons.append([
+        InlineKeyboardButton(
+            text="🏠 Главное меню",
+            callback_data="back_to_main"
+        )
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_back_keyboard() -> InlineKeyboardMarkup:

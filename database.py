@@ -167,7 +167,7 @@ async def reset_quit_date(user_id: int) -> bool:
         return True
 
 
-async def get_leaderboard(limit: int = 10) -> list:
+async def get_leaderboard(limit: int = 10, offset: int = 0) -> list:
     """Получение рейтинга пользователей"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -177,8 +177,8 @@ async def get_leaderboard(limit: int = 10) -> list:
                FROM users
                WHERE quit_date IS NOT NULL
                ORDER BY quit_date ASC
-               LIMIT ?""",
-            (limit,)
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -20,7 +20,8 @@ from keyboards import (
     get_relapse_keyboard,
     get_number_keyboard,
     get_price_keyboard,
-    get_back_keyboard
+    get_back_keyboard,
+    get_rating_keyboard
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
 
@@ -229,18 +230,35 @@ async def cmd_progress(message: Message):
 @dp.message(F.text == "🏆 Рейтинг")
 async def cmd_rating(message: Message):
     """Показать рейтинг"""
-    leaderboard = await db.get_leaderboard(10)
+    await show_rating_page(message, 0)
+
+
+async def show_rating_page(message_or_callback, page: int):
+    """Показать страницу рейтинга"""
+    offset = page * 10
+    leaderboard = await db.get_leaderboard(11, offset)  # +1 чтобы проверить есть ли следующая страница
 
     if not leaderboard:
-        await message.answer(
-            "🏆 *Рейтинг пока пуст*\n\n"
-            "Станьте первым участником!",
-            reply_markup=get_main_keyboard()
-        )
+        text = "🏆 *Рейтинг пока пуст*\n\n"
+        text += "Станьте первым участником!"
+        
+        if isinstance(message_or_callback, Message):
+            await message_or_callback.answer(
+                text,
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await message_or_callback.message.edit_text(text)
+            await message_or_callback.answer()
         return
 
-    current_user_id = message.from_user.id
-    rating_text = "🏆 *Таблица лидеров*\n\n"
+    # Проверяем есть ли следующая страница
+    has_next = len(leaderboard) > 10
+    if has_next:
+        leaderboard = leaderboard[:10]  # Убираем лишнего пользователя
+
+    current_user_id = message_or_callback.from_user.id
+    rating_text = f"🏆 *Таблица лидеров* (стр. {page + 1})\n\n"
 
     medals = ["🥇", "🥈", "🥉"]
 
@@ -249,16 +267,26 @@ async def cmd_rating(message: Message):
         delta = datetime.now() - quit_date
         duration = format_duration(delta)
 
-        medal = medals[i] if i < 3 else f"{i + 1}."
+        global_rank = offset + i + 1
+        medal = medals[i] if (page == 0 and i < 3) else f"{global_rank}."
         name = user.get("first_name") or user.get("username") or "Аноним"
 
-        is_current = "👈" if user["user_id"] == current_user_id else ""
+        is_current = "👈 ВЫ" if user["user_id"] == current_user_id else ""
 
         rating_text += f"{medal} *{name}* — {duration} {is_current}\n"
 
     rating_text += "\n💪 _Чем дольше без сигарет — тем выше в рейтинге!_"
 
-    await message.answer(rating_text, reply_markup=get_main_keyboard())
+    # Определяем есть ли предыдущая страница
+    has_prev = page > 0
+
+    keyboard = get_rating_keyboard(page, has_prev, has_next)
+
+    if isinstance(message_or_callback, Message):
+        await message_or_callback.answer(rating_text, reply_markup=keyboard)
+    else:
+        await message_or_callback.message.edit_text(rating_text, reply_markup=keyboard)
+        await message_or_callback.answer()
 
 
 @dp.message(Command("motivation"))
@@ -617,6 +645,77 @@ async def callback_stay_strong(callback: CallbackQuery):
         f"💪 *Отлично! Вы молодец!*\n\n{quote}"
     )
     await callback.answer("Так держать! 🎉")
+
+
+@dp.callback_query(F.data == "share_result")
+async def callback_share_result(callback: CallbackQuery):
+    """Поделиться результатом"""
+    user = await db.get_user(callback.from_user.id)
+
+    if not user or not user.get("quit_date"):
+        await callback.answer("Сначала укажите дату отказа!", show_alert=True)
+        return
+
+    quit_date = datetime.fromisoformat(user["quit_date"])
+    now = datetime.now()
+    delta = now - quit_date
+
+    days = delta.days
+    hours = delta.seconds // 3600
+    savings = calculate_savings(user, delta)
+    cigarettes = calculate_cigarettes_not_smoked(user, delta)
+
+    # Формируем красивое сообщение для шаринга
+    share_text = f"""
+🚭 *StopSmoke Bot — Мой результат*
+
+👤 Я бросаю курить!
+
+📅 *Дата отказа:* {quit_date.strftime("%d.%m.%Y")}
+⏱️ *Держусь уже:* {days} дн. {hours} ч.
+
+💰 *Сэкономил:* {savings:,.0f}₽
+🚬 *Не выкурил:* {cigarettes:,} сигарет
+
+💪 Присоединяйся! Бросай курить вместе со мной!
+"""
+
+    await callback.message.answer(
+        share_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚭 Тоже бросить!",
+                    url=f"https://t.me/{(await bot.get_me()).username}"
+                )
+            ]
+        ])
+    )
+    await callback.answer("Результат отправлен! Перешлите его друзьям 📤")
+
+
+@dp.callback_query(F.data.startswith("rating_prev_") | F.data.startswith("rating_next_"))
+async def callback_rating_navigation(callback: CallbackQuery):
+    """Навигация по рейтингу"""
+    action, page_str = callback.data.rsplit("_", 1)
+    page = int(page_str)
+
+    if action == "rating_prev":
+        page -= 1
+    else:
+        page += 1
+
+    await show_rating_page(callback, page)
+
+
+@dp.callback_query(F.data == "back_to_main")
+async def callback_back_to_main(callback: CallbackQuery):
+    """Возврат в главное меню"""
+    await callback.message.edit_text(
+        "Используйте кнопки ниже для навигации.",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
 
 
 # ============ ОБРАБОТКА ТЕКСТА (дата) ============
