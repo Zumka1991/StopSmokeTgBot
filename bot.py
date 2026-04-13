@@ -114,6 +114,11 @@ async def cmd_start(message: Message):
 • Вести рейтинг с другими участниками
 • Отмечать твои достижения
 
+🌐 *Также посетите наше сообщество:*
+🔗 https://stopsmoke.info
+
+Статьи, книги, болталка и счётчик отказа от никотина!
+
 Готов начать путь к здоровой жизни?
 """
         await message.answer(
@@ -297,6 +302,39 @@ async def cmd_motivation(message: Message):
     await message.answer(
         f"💫 *Мотивация дня:*\n\n{quote}",
         reply_markup=get_main_keyboard()
+    )
+
+
+@dp.message(F.text == "🌐 Сообщество")
+async def cmd_community(message: Message):
+    """Сообщество StopSmoke"""
+    community_text = """
+🌐 *Сообщество StopSmoke*
+
+🔗 https://stopsmoke.info
+
+*Что вас ждёт:*
+
+📚 *Статьи* — полезные материалы о вреде курения и способах отказа
+
+📖 *Книги* — подборка литературы для мотивации
+
+💬 *Болталка* — общайтесь с единомышленниками, делитесь опытом
+
+⏱️ *Счётчик* — наглядный счётчик времени без никотина
+
+Присоединяйтесь к сообществу людей, которые бросают курить!
+"""
+    await message.answer(
+        community_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Перейти на сайт",
+                    url="https://stopsmoke.info"
+                )
+            ]
+        ])
     )
 
 
@@ -778,6 +816,13 @@ async def send_daily_motivation():
 📊 *Ваша статистика:*
 🕐 Без сигарет: *{duration}*
 💰 Сэкономлено: *{savings:,.0f}₽*
+
+━━━━━━━━━━━━━━━━━━━━
+
+🌐 *Сообщество StopSmoke:*
+🔗 https://stopsmoke.info
+
+Статьи, книги, болталка и счётчик!
 
 💪 *Ещё один день победы!*
 """
