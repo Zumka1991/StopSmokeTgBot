@@ -168,10 +168,11 @@ async def cmd_start(message: Message, command: CommandObject):
 • Вести рейтинг с другими участниками
 • Отмечать твои достижения
 
-🌐 *Также посетите наше сообщество:*
-🔗 https://stopsmoke.info
+🤖 *ИИ-Поддержка:*
+Пригласите хотя бы одного друга, и вам откроется доступ к нашему умному ИИ-ассистенту, который поможет справиться с тягой в любую минуту!
 
-Статьи, книги, болталка и счётчик отказа от никотина!
+🌐 *Наше сообщество:*
+🔗 https://stopsmoke.info
 
 Готов начать путь к здоровой жизни?
 """
@@ -1374,6 +1375,21 @@ async def callback_back_to_main(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "С возвращением! Выбирайте раздел:",
         reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "show_ref_link")
+async def callback_show_ref_link(callback: CallbackQuery):
+    """Показ реферальной ссылки"""
+    user_id = callback.from_user.id
+    bot_info = await bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    
+    await callback.message.answer(
+        "🚀 *Ваша пригласительная ссылка:*\n\n"
+        f"`{ref_link}`\n\n"
+        "Отправьте её другу, и как только он запустит бота, вам откроется доступ к ИИ-ассистенту! 💪"
     )
     await callback.answer()
 

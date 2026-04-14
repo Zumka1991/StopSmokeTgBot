@@ -46,6 +46,12 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
                 text="📅 Выбрать дату",
                 callback_data="choose_date"
             )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔗 Ссылка для приглашения",
+                callback_data="show_ref_link"
+            )
         ]
     ])
     return keyboard
