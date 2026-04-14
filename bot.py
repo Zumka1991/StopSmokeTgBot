@@ -496,7 +496,11 @@ async def cmd_setai(message: Message, command: CommandObject):
     
     if not user:
         await message.answer(f"❌ Пользователь @{target_username} не найден в базе.\n\n"
-                           "Пользователь должен хотя бы раз запустить бота (/start).")
+                           "Возможные причины:\n"
+                           "• Пользователь не запускал бота (/start)\n"
+                           "• У пользователя нет username в Telegram\n"
+                           "• Имя указано неверно\n\n"
+                           "💡 Используйте /setaiid <user_id> если знаете Telegram ID пользователя.")
         return
     
     # Открываем доступ к ИИ
@@ -519,6 +523,65 @@ async def cmd_setai(message: Message, command: CommandObject):
         )
     except Exception as e:
         logger.error(f"Не удалось уведомить пользователя {user['user_id']}: {e}")
+        await message.answer(f"⚠️ Не удалось отправить уведомление пользователю. Возможно, он заблокировал бота.")
+
+
+@dp.message(Command("setaiid"))
+async def cmd_setaiid(message: Message, command: CommandObject):
+    """Открыть доступ к ИИ пользователю по user_id (только для админов)"""
+    username = message.from_user.username or ""
+    
+    if not is_admin(username):
+        await message.answer("⛔ У вас нет прав на эту команду.")
+        return
+    
+    user_id_str = command.args
+    if not user_id_str:
+        await message.answer(
+            "❌ Использование: /setaiid <telegram_user_id>\n\n"
+            "Пример: /setaiid 123456789"
+        )
+        return
+    
+    try:
+        target_user_id = int(user_id_str)
+    except ValueError:
+        await message.answer("❌ Неверный формат ID. Введите числовой Telegram ID.")
+        return
+    
+    # Ищем пользователя по user_id
+    user = await db.get_user(target_user_id)
+    
+    if not user:
+        await message.answer(f"❌ Пользователь с ID `{target_user_id}` не найден в базе.\n\n"
+                           "Пользователь должен хотя бы раз запустить бота (/start).")
+        return
+    
+    # Открываем доступ к ИИ
+    await db.unlock_user_ai(target_user_id)
+    
+    name = user.get("first_name") or "Пользователь"
+    user_username = user.get("username")
+    
+    await message.answer(
+        f"✅ *Доступ к ИИ открыт!*\n\n"
+        f"👤 Пользователь: {name}\n"
+        f"📛 Username: @{user_username if user_username else 'нет'}\n"
+        f"🆔 ID: `{target_user_id}`\n\n"
+        f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
+    )
+    
+    # Уведомляем пользователя
+    try:
+        await bot.send_message(
+            target_user_id,
+            "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
+            "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
+            "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {target_user_id}: {e}")
+        await message.answer(f"⚠️ Не удалось отправить уведомление. Возможно, бот заблокирован пользователем.")
 
 
 @dp.message(Command("stats"))
