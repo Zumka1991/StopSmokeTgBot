@@ -43,6 +43,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден! Создайте файл .env с токеном бота.")
 
+# Админы бота (через запятую в .env)
+ADMIN_USERNAMES = set(os.getenv("ADMIN_USERNAMES", "").replace(" ", "").split(",")) - {""}
+
+def is_admin(username: str) -> bool:
+    """Проверка, является ли пользователь админом"""
+    if not username:
+        return False
+    return username.lstrip("@") in {u.lstrip("@") for u in ADMIN_USERNAMES}
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -409,6 +418,48 @@ async def cmd_reset_ai(message: Message):
         "Теперь вам снова доступно 10 вопросов на сегодня.",
         reply_markup=get_main_keyboard()
     )
+
+
+@dp.message(Command("mail"))
+async def cmd_mail(message: Message, command: CommandObject):
+    """Рассылка сообщения всем пользователям (только для админов)"""
+    username = message.from_user.username or ""
+    
+    if not is_admin(username):
+        await message.answer("⛔ У вас нет прав для выполнения этой команды.")
+        return
+    
+    mail_text = command.args
+    if not mail_text:
+        await message.answer("❌ Использование: /mail <текст сообщения>")
+        return
+    
+    await message.answer("📤 *Рассылка началась...*\n\nЭто сообщение будет разослано всем пользователям.")
+    
+    # Запускаем асинхронную рассылку
+    asyncio.create_task(send_broadcast_mail(message.from_user.id, mail_text))
+
+
+async def send_broadcast_mail(admin_id: int, text: str):
+    """Асинхронная рассылка сообщения всем пользователям"""
+    user_ids = await db.get_all_user_ids()
+    
+    sent = 0
+    errors = 0
+    
+    for user_id in user_ids:
+        try:
+            await bot.send_message(user_id, text)
+            sent += 1
+            await asyncio.sleep(0.05)  # Небольшая задержка между сообщениями
+        except Exception as e:
+            errors += 1
+            logger.error(f"Ошибка рассылки пользователю {user_id}: {e}")
+    
+    # Отправляем отчёт админу
+    report = f"✅ *Рассылка завершена!*\n\n📊 Отправлено: *{sent}*\n❌ Ошибок: *{errors}*\n📨 Всего в базе: *{len(user_ids)}*"
+    await bot.send_message(admin_id, report)
+    logger.info(f"Рассылка завершена. Отправлено: {sent}, ошибок: {errors}")
 
 
 @dp.message(Command("stats"))
