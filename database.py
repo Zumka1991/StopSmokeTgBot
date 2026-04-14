@@ -103,6 +103,13 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS global_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
         await db.commit()
 
 
@@ -465,6 +472,7 @@ async def get_ai_chat_history(user_id: int, limit: int = 10) -> list:
         return [{"role": row["role"], "content": row["content"]} for row in rows]
 
 
+
 async def clear_ai_chat_history(user_id: int):
     """Очистка истории чата с ИИ"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -473,3 +481,31 @@ async def clear_ai_chat_history(user_id: int):
             (user_id,)
         )
         await db.commit()
+
+
+async def is_broadcast_sent(key: str) -> bool:
+    """Проверка, была ли отправлена рассылка"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT value FROM global_settings WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+        return row is not None and row[0] == "sent"
+
+
+async def set_broadcast_sent(key: str):
+    """Отметка о выполнении рассылки"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
+            (key, "sent")
+        )
+        await db.commit()
+
+
+async def get_all_user_ids() -> list[int]:
+    """Получение всех ID пользователей"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("SELECT user_id FROM users")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]

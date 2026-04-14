@@ -1394,6 +1394,48 @@ async def callback_show_ref_link(callback: CallbackQuery):
     await callback.answer()
 
 
+
+async def run_startup_broadcast():
+    """Разовая рассылка при запуске"""
+    broadcast_key = "ai_referral_broadcast_v1"
+    
+    if await db.is_broadcast_sent(broadcast_key):
+        logger.info("Рассылка уже была выполнена ранее")
+        return
+
+    logger.info("Начало разовой рассылки...")
+    user_ids = await db.get_all_user_ids()
+    
+    broadcast_text = (
+        "🤖 *ИИ-Ассистент готов вам помочь!*\n\n"
+        "Друзья, теперь в нашем боте доступен умный ИИ-помощник, который поможет вам "
+        "справиться с тягой к курению в любую минуту. \n\n"
+        "Чтобы открыть доступ к нему, вам нужно пригласить всего одного друга! \n\n"
+        "Нажмите на кнопку ниже, чтобы получить свою персональную ссылку. "
+        "Вместе бросать намного легче! 💪"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Пригласить друга", callback_data="show_ref_link")]
+    ])
+    
+    sent_count = 0
+    error_count = 0
+    
+    for user_id in user_ids:
+        try:
+            await bot.send_message(user_id, broadcast_text, reply_markup=keyboard)
+            sent_count += 1
+            # Задержка 0.1 сек (10 сообщений в секунду) - максимально безопасно
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            error_count += 1
+            logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+            
+    await db.set_broadcast_sent(broadcast_key)
+    logger.info(f"Рассылка завершена. Успешно: {sent_count}, Ошибок: {error_count}")
+
+
 # ============ ЗАПУСК ============
 
 async def on_startup():
@@ -1426,6 +1468,9 @@ async def on_startup():
 
     scheduler.start()
     logger.info("Планировщик запущен")
+
+    # Запускаем фоновую рассылку (если не была выполнена)
+    asyncio.create_task(run_startup_broadcast())
 
 
 async def on_shutdown():
