@@ -8,10 +8,10 @@ import platform
 
 logger = logging.getLogger(__name__)
 
-# Базовая директория проекта (где лежит этот скрипт)
+# Базовая директория проекта
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Расширенные пути к шрифтам
+# Пути к шрифтам
 FONT_PATHS = {
     "win": {
         "regular": "C:/Windows/Fonts/segoeui.ttf",
@@ -20,49 +20,48 @@ FONT_PATHS = {
     },
     "linux": {
         "regular": [
-            os.path.join(BASE_DIR, "data", "fonts", "regular.ttf"), # Абсолютный путь
+            os.path.join(BASE_DIR, "data", "fonts", "regular.ttf"),
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         ],
         "bold": [
-            os.path.join(BASE_DIR, "data", "fonts", "bold.ttf"),    # Абсолютный путь
+            os.path.join(BASE_DIR, "data", "fonts", "bold.ttf"),
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         ],
         "emoji": [
-            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
         ]
     }
 }
 
-def get_font_path(type_key: str) -> str:
+def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
+    """Загрузка шрифта с подробным логированием для диагностики"""
     os_name = platform.system().lower()
-    if "windows" in os_name:
-        return FONT_PATHS["win"][type_key]
     
+    if "windows" in os_name:
+        path = FONT_PATHS["win"][type_key]
+        try:
+            return ImageFont.truetype(path, size)
+        except:
+            return ImageFont.load_default()
+    
+    # Логика для Linux
     paths = FONT_PATHS["linux"][type_key]
     for p in paths:
         if os.path.exists(p):
-            return p
-    return paths[0]
-
-def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
-    path = get_font_path(type_key)
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception as e:
-        logger.warning(f"Шрифт {type_key} не найден по пути {path}. Используем fallback.")
-        if platform.system().lower() != "windows":
-            fallbacks = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]
-            for f in fallbacks:
-                try: return ImageFont.truetype(f, size)
-                except: continue
-        return ImageFont.load_default()
+            try:
+                f = ImageFont.truetype(p, size)
+                # Логируем успех только один раз для краткости
+                logger.info(f"Шрифт {type_key} успешно загружен из: {p}")
+                return f
+            except Exception as e:
+                logger.error(f"Ошибка загрузки существующего файла {p}: {e}")
+        else:
+            logger.debug(f"Файл шрифта не найден по пути: {p}")
+            
+    logger.error(f"CRITICAL: Все варианты шрифта {type_key} не найдены или не загрузились! Использование fallback.")
+    return ImageFont.load_default()
 
 def draw_mesh_background(width: int, height: int):
     base = Image.new('RGBA', (width, height), (7, 10, 19, 255))
@@ -99,8 +98,7 @@ def create_ultra_minimal_logo(size=300):
     if os.path.exists(LOGO_V3):
         try:
             icon = Image.open(LOGO_V3).convert('RGBA')
-            pad = 50
-            icon_size = size - pad * 2
+            pad = 50; icon_size = size - pad * 2
             icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
             badge.paste(icon, (pad, pad), icon)
         except: pass
@@ -153,10 +151,7 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     pct = min(100, (days / 365) * 100)
     if pct > 0: draw.rounded_rectangle([PADDING, py+60, PADDING + int((WIDTH-PADDING*2)*pct/100), py+88], radius=14, fill=(14, 165, 233, 255))
     
-    # Абсолютный путь для сохранения
-    if not os.path.isabs(output_path):
-        output_path = os.path.join(BASE_DIR, output_path)
-    
+    if not os.path.isabs(output_path): output_path = os.path.join(BASE_DIR, output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     img.convert('RGB').save(output_path, "PNG", quality=95)
     return output_path
