@@ -25,6 +25,7 @@ from keyboards import (
     get_rating_confirm_keyboard
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
+from share_card import create_share_card
 
 load_dotenv()
 
@@ -753,7 +754,9 @@ async def callback_stay_strong(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "share_result")
 async def callback_share_result(callback: CallbackQuery):
-    """Поделиться результатом"""
+    """Поделиться результатом — генерация карточки"""
+    await callback.answer("Генерирую карточку... 🎨")
+
     user = await db.get_user(callback.from_user.id)
 
     if not user or not user.get("quit_date"):
@@ -764,38 +767,35 @@ async def callback_share_result(callback: CallbackQuery):
     now = datetime.now()
     delta = now - quit_date
 
-    days = delta.days
-    hours = delta.seconds // 3600
     savings = calculate_savings(user, delta)
     cigarettes = calculate_cigarettes_not_smoked(user, delta)
+    first_name = user.get("first_name") or callback.from_user.first_name or "Участник"
+    quit_date_str = quit_date.strftime("%d.%m.%Y")
 
-    # Формируем красивое сообщение для шаринга
-    share_text = f"""
-🚭 *StopSmoke Bot — Мой результат*
+    # Генерируем карточку
+    card_path = create_share_card(first_name, delta, savings, cigarettes, quit_date_str)
 
-👤 Я бросаю курить!
-
-📅 *Дата отказа:* {quit_date.strftime("%d.%m.%Y")}
-⏱️ *Держусь уже:* {days} дн. {hours} ч.
-
-💰 *Сэкономил:* {savings:,.0f}₽
-🚬 *Не выкурил:* {cigarettes:,} сигарет
-
-💪 Присоединяйся! Бросай курить вместе со мной!
-"""
-
-    await callback.message.answer(
-        share_text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚭 Тоже бросить!",
-                    url=f"https://t.me/{(await bot.get_me()).username}"
-                )
-            ]
-        ])
-    )
-    await callback.answer("Результат отправлен! Перешлите его друзьям 📤")
+    # Отправляем как фото
+    with open(card_path, "rb") as photo:
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=(
+                f"🚭 *StopSmoke Bot — Мой результат*\n\n"
+                f"👤 *{first_name}* бросает курить!\n\n"
+                f"📅 Дата отказа: *{quit_date_str}*\n"
+                f"💰 Сэкономил: *{savings:,.0f}₽*\n"
+                f"🚬 Не выкурил: *{cigarettes:,} сигарет*\n\n"
+                f"💪 Присоединяйся! Бросай курить вместе со мной!"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚭 Тоже бросить!",
+                        url=f"https://t.me/{(await bot.get_me()).username}"
+                    )
+                ]
+            ])
+        )
 
 
 @dp.callback_query(F.data.startswith("rating_prev_") | F.data.startswith("rating_next_"))
