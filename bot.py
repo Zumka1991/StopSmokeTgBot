@@ -763,38 +763,48 @@ async def callback_share_result(callback: CallbackQuery):
         await callback.answer("Сначала укажите дату отказа!", show_alert=True)
         return
 
-    quit_date = datetime.fromisoformat(user["quit_date"])
-    now = datetime.now()
-    delta = now - quit_date
+    try:
+        quit_date = datetime.fromisoformat(user["quit_date"])
+        now = datetime.now()
+        delta = now - quit_date
 
-    savings = calculate_savings(user, delta)
-    cigarettes = calculate_cigarettes_not_smoked(user, delta)
-    first_name = user.get("first_name") or callback.from_user.first_name or "Участник"
-    quit_date_str = quit_date.strftime("%d.%m.%Y")
+        savings = calculate_savings(user, delta)
+        cigarettes = calculate_cigarettes_not_smoked(user, delta)
+        first_name = user.get("first_name") or callback.from_user.first_name or "Участник"
+        quit_date_str = quit_date.strftime("%d.%m.%Y")
 
-    # Генерируем карточку
-    card_path = create_share_card(first_name, delta, savings, cigarettes, quit_date_str)
+        # Генерируем карточку
+        card_path = create_share_card(first_name, delta, savings, cigarettes, quit_date_str)
 
-    # Отправляем как фото
-    with open(card_path, "rb") as photo:
-        await callback.message.answer_photo(
-            photo=photo,
-            caption=(
-                f"🚭 *StopSmoke Bot — Мой результат*\n\n"
-                f"👤 *{first_name}* бросает курить!\n\n"
-                f"📅 Дата отказа: *{quit_date_str}*\n"
-                f"💰 Сэкономил: *{savings:,.0f}₽*\n"
-                f"🚬 Не выкурил: *{cigarettes:,} сигарет*\n\n"
-                f"💪 Присоединяйся! Бросай курить вместе со мной!"
-            ),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🚭 Тоже бросить!",
-                        url=f"https://t.me/{(await bot.get_me()).username}"
-                    )
-                ]
-            ])
+        bot_username = (await bot.get_me()).username
+
+        # Отправляем как фото
+        with open(card_path, "rb") as photo:
+            await callback.message.answer_photo(
+                photo=photo,
+                caption=(
+                    f"🚭 *StopSmoke Bot — Мой результат*\n\n"
+                    f"👤 *{first_name}* бросает курить!\n\n"
+                    f"📅 Дата отказа: *{quit_date_str}*\n"
+                    f"💰 Сэкономил: *{savings:,.0f}₽*\n"
+                    f"🚬 Не выкурил: *{cigarettes:,} сигарет*\n\n"
+                    f"💪 Присоединяйся! Бросай курить вместе со мной!"
+                ),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🚭 Тоже бросить!",
+                            url=f"https://t.me/{bot_username}"
+                        )
+                    ]
+                ])
+            )
+
+    except Exception as e:
+        logger.error(f"Ошибка генерации карточки: {e}")
+        await callback.message.answer(
+            "😔 Не удалось создать карточку. Попробуйте позже.",
+            reply_markup=get_main_keyboard()
         )
 
 
