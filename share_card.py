@@ -20,14 +20,17 @@ FONT_PATHS = {
     },
     "linux": {
         "regular": [
-            os.path.join(BASE_DIR, "data", "fonts", "regular.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            os.path.join(BASE_DIR, "data", "fonts", "regular.ttf")
         ],
         "bold": [
-            os.path.join(BASE_DIR, "data", "fonts", "bold.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            os.path.join(BASE_DIR, "data", "fonts", "bold.ttf")
         ],
         "emoji": [
             "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
