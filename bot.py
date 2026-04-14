@@ -490,40 +490,50 @@ async def cmd_setai(message: Message, command: CommandObject):
     
     # Убираем @ если есть
     target_username = target_username.lstrip("@")
+    logger.info(f"/setai: ищу пользователя @{target_username}")
     
-    # Ищем пользователя по username
-    user = await db.get_user_by_username(target_username)
-    
-    if not user:
-        await message.answer(f"❌ Пользователь @{target_username} не найден в базе.\n\n"
-                           "Возможные причины:\n"
-                           "• Пользователь не запускал бота (/start)\n"
-                           "• У пользователя нет username в Telegram\n"
-                           "• Имя указано неверно\n\n"
-                           "💡 Используйте /setai_uid <user_id> если знаете Telegram ID пользователя.")
-        return
-    
-    # Открываем доступ к ИИ
-    await db.unlock_user_ai(user["user_id"])
-    
-    await message.answer(
-        f"✅ *Доступ к ИИ открыт!*\n\n"
-        f"👤 Пользователь: @{target_username}\n"
-        f"🆔 ID: `{user['user_id']}`\n\n"
-        f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
-    )
-    
-    # Опционально: уведомляем самого пользователя
     try:
-        await bot.send_message(
-            user["user_id"],
-            "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
-            "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
-            "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+        # Ищем пользователя по username
+        user = await db.get_user_by_username(target_username)
+        logger.info(f"/setai: результат поиска: {user}")
+        
+        if not user:
+            await message.answer(f"❌ Пользователь @{target_username} не найден в базе.\n\n"
+                               "Возможные причины:\n"
+                               "• Пользователь не запускал бота (/start)\n"
+                               "• У пользователя нет username в Telegram\n"
+                               "• Имя указано неверно\n\n"
+                               "💡 Используйте /setai_uid <user_id> если знаете Telegram ID пользователя.")
+            return
+        
+        # Открываем доступ к ИИ
+        await db.unlock_user_ai(user["user_id"])
+        logger.info(f"/setai: открыт доступ для user_id={user['user_id']}")
+        
+        await message.answer(
+            f"✅ *Доступ к ИИ открыт!*\n\n"
+            f"👤 Пользователь: @{target_username}\n"
+            f"🆔 ID: `{user['user_id']}`\n\n"
+            f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
         )
+        
+        # Опционально: уведомляем самого пользователя
+        try:
+            await bot.send_message(
+                user["user_id"],
+                "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
+                "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
+                "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+            )
+            logger.info(f"/setai: уведомление отправлено user_id={user['user_id']}")
+        except Exception as e:
+            logger.error(f"Не удалось уведомить пользователя {user['user_id']}: {e}")
+            await message.answer(f"⚠️ Не удалось отправить уведомление пользователю. Возможно, он заблокировал бота.")
+            
     except Exception as e:
-        logger.error(f"Не удалось уведомить пользователя {user['user_id']}: {e}")
-        await message.answer(f"⚠️ Не удалось отправить уведомление пользователю. Возможно, он заблокировал бота.")
+        logger.error(f"/setai: ошибка: {e}")
+        logger.error(traceback.format_exc())
+        await message.answer(f"❌ Ошибка: {e}")
 
 
 @dp.message(Command("setai_uid"))
