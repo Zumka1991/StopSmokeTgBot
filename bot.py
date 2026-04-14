@@ -1663,14 +1663,13 @@ async def handle_ai_question(message: Message, state: FSMContext):
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
         await db.increment_ai_usage(user_id)
         
-        # Обработка ответа
+        # Обработка ответа - отправляем без парсинга чтобы избежать ошибок
         if len(ai_text) > 4000:
             await waiting_msg.delete()
             for i in range(0, len(ai_text), 4000):
                 await message.answer(ai_text[i:i+4000])
         else:
-            # Используем HTML для избежания ошибок парсинга Markdown от ИИ
-            await waiting_msg.edit_text(ai_text, parse_mode="HTML")
+            await waiting_msg.edit_text(ai_text, parse_mode=None)
             
     except Exception as e:
         logger.error(f"Ошибка ИИ-помощника: {e}")
