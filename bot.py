@@ -1273,7 +1273,7 @@ async def callback_ask_ai(callback: CallbackQuery, state: FSMContext):
 
     can_ask, left = await db.check_ai_limit(user_id)
     if not can_ask:
-        await callback.answer("Вы исчерпали лимит (3 вопроса в день). Ждем вас завтра!", show_alert=True)
+        await callback.answer("Вы исчерпали лимит (10 вопросов в день). Ждем вас завтра!", show_alert=True)
         return
 
     await callback.message.edit_text(

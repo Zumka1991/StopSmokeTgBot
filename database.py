@@ -425,9 +425,9 @@ async def check_ai_limit(user_id: int) -> tuple[bool, int]:
                 (today, user_id)
             )
             await db.commit()
-            return True, 3
+            return True, 10
 
-        return count < 3, max(0, 3 - count)
+        return count < 10, max(0, 10 - count)
 
 
 async def increment_ai_usage(user_id: int):
