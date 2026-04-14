@@ -133,6 +133,13 @@ def calculate_cigarettes_not_smoked(user: dict, delta: timedelta) -> int:
     return int(days * user.get("cigarettes_per_day", 20))
 
 
+def escape_markdown(text: str) -> str:
+    """Экранирование спецсимволов Markdown v1"""
+    for char in ('_', '*', '`', '['):
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def get_progress_bar(percent: float, length: int = 10) -> str:
     """Создание прогресс-бара"""
     filled = int(percent / 100 * length)
@@ -343,7 +350,7 @@ async def show_rating_page(message_or_callback, page: int):
         # Формируем имя с username в скобках
         username = user.get("username")
         if username:
-            name = f"{user.get('first_name', 'Аноним')} (@{username})"
+            name = f"{escape_markdown(user.get('first_name', 'Аноним'))} (@{escape_markdown(username)})"
         else:
             name = user.get("first_name") or "Аноним"
 
@@ -498,21 +505,23 @@ async def cmd_setai(message: Message, command: CommandObject):
         logger.info(f"/setai: результат поиска: {user}")
         
         if not user:
-            await message.answer(f"❌ Пользователь @{target_username} не найден в базе.\n\n"
+            safe_username = escape_markdown(target_username)
+            await message.answer(f"❌ Пользователь @{safe_username} не найден в базе.\n\n"
                                "Возможные причины:\n"
                                "• Пользователь не запускал бота (/start)\n"
                                "• У пользователя нет username в Telegram\n"
                                "• Имя указано неверно\n\n"
-                               "💡 Используйте /setai_uid <user_id> если знаете Telegram ID пользователя.")
+                               "💡 Используйте /setai\\_uid <user\\_id> если знаете Telegram ID пользователя.")
             return
         
         # Открываем доступ к ИИ
         await db.unlock_user_ai(user["user_id"])
         logger.info(f"/setai: открыт доступ для user_id={user['user_id']}")
         
+        safe_username = escape_markdown(target_username)
         await message.answer(
             f"✅ *Доступ к ИИ открыт!*\n\n"
-            f"👤 Пользователь: @{target_username}\n"
+            f"👤 Пользователь: @{safe_username}\n"
             f"🆔 ID: `{user['user_id']}`\n\n"
             f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
         )
@@ -577,7 +586,7 @@ async def cmd_setai_uid(message: Message, command: CommandObject):
     await message.answer(
         f"✅ *Доступ к ИИ открыт!*\n\n"
         f"👤 Пользователь: {name}\n"
-        f"📛 Username: @{user_username if user_username else 'нет'}\n"
+        f"📛 Username: @{escape_markdown(user_username) if user_username else 'нет'}\n"
         f"🆔 ID: `{target_user_id}`\n\n"
         f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
     )
