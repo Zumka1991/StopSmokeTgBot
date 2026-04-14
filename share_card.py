@@ -8,6 +8,9 @@ import platform
 
 logger = logging.getLogger(__name__)
 
+# Базовая директория проекта (где лежит этот скрипт)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Расширенные пути к шрифтам
 FONT_PATHS = {
     "win": {
@@ -17,14 +20,14 @@ FONT_PATHS = {
     },
     "linux": {
         "regular": [
-            "./data/fonts/regular.ttf", # В первую очередь ищем в проекте
+            os.path.join(BASE_DIR, "data", "fonts", "regular.ttf"), # Абсолютный путь
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
         ],
         "bold": [
-            "./data/fonts/bold.ttf", # В проекте
+            os.path.join(BASE_DIR, "data", "fonts", "bold.ttf"),    # Абсолютный путь
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
@@ -42,34 +45,23 @@ def get_font_path(type_key: str) -> str:
     if "windows" in os_name:
         return FONT_PATHS["win"][type_key]
     
-    # Для Linux/других проверяем список путей
     paths = FONT_PATHS["linux"][type_key]
     for p in paths:
         if os.path.exists(p):
             return p
-    
-    # Если ничего не нашли, возвращаем первый из списка для попытки загрузки
     return paths[0]
 
 def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
     path = get_font_path(type_key)
     try:
-        # Пытаемся загрузить шрифт
         return ImageFont.truetype(path, size)
     except Exception as e:
         logger.warning(f"Шрифт {type_key} не найден по пути {path}. Используем fallback.")
-        
-        # Крайний случай: пробуем найти хоть какую-то кириллицу в Linux
         if platform.system().lower() != "windows":
-            fallbacks = [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                "Arial.ttf" # PIL иногда находит системные по имени
-            ]
+            fallbacks = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]
             for f in fallbacks:
                 try: return ImageFont.truetype(f, size)
                 except: continue
-                
         return ImageFont.load_default()
 
 def draw_mesh_background(width: int, height: int):
@@ -103,7 +95,7 @@ def create_ultra_minimal_logo(size=300):
         alpha = int(20 * (1 - i/15))
         d.rounded_rectangle([15-i, 15-i, size-5+i, size-5+i], radius=70+i, fill=(0, 0, 0, alpha))
     d.rounded_rectangle([10, 10, size-10, size-10], radius=65, fill=(255, 255, 255, 255))
-    LOGO_V3 = "data/logo_v3.png"
+    LOGO_V3 = os.path.join(BASE_DIR, "data", "logo_v3.png")
     if os.path.exists(LOGO_V3):
         try:
             icon = Image.open(LOGO_V3).convert('RGBA')
@@ -120,23 +112,19 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     img = draw_mesh_background(WIDTH, HEIGHT)
     draw = ImageDraw.Draw(img, 'RGBA')
 
-    # Загрузка шрифтов
     f_h1 = get_font("bold", 76); f_days = get_font("bold", 240); f_label = get_font("regular", 44)
     f_stat_v = get_font("bold", 68); f_stat_l = get_font("regular", 30)
     f_emoji = get_font("emoji", 48)
 
-    # 1. ЛОГОТИП
     logo_size = 300
     logo = create_ultra_minimal_logo(logo_size)
     img.paste(logo, ((WIDTH - logo_size) // 2, 100), logo)
 
-    # Заголовок
     bbox = draw.textbbox((0, 0), first_name, font=f_h1)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 450), first_name, fill=(255, 255, 255, 255), font=f_h1)
     sub = "на пути к здоровью"; bbox = draw.textbbox((0, 0), sub, font=f_label)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 540), sub, fill=(148, 163, 184, 255), font=f_label)
 
-    # 2. КАРТОЧКА ДНЕЙ
     days = delta.days; cy, ch = 650, 480
     draw_glass_card(img, PADDING, cy, WIDTH - PADDING * 2, ch)
     txt_d = str(days); bbox = draw.textbbox((0, 0), txt_d, font=f_days)
@@ -151,7 +139,6 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     h_txt = f"и {delta.seconds // 3600} часов свободы"; bbox = draw.textbbox((0, 0), h_txt, font=f_label)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 390), h_txt, fill=(148, 163, 184, 255), font=f_label)
 
-    # 3. СТАТИСТИКА
     sy, sw, sh = 1180, (WIDTH - PADDING * 2 - 40) // 2, 260
     st_data = [{"v": f"{savings:,.0f}₽", "l": "Сэкономлено", "i": "💰"}, {"v": f"{cigarettes:,}", "l": "Не выкурено", "i": "🚭"}, {"v": f"{int(cigarettes * 5 / 60)}ч", "l": "Жизни спасено", "i": "❤️"}, {"v": f"{quit_date_str}", "l": "Дата старта", "i": "📅"}]
     for i, s in enumerate(st_data):
@@ -161,12 +148,15 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
         l_b = draw.textbbox((0,0), s["l"], font=f_stat_l); draw.text((sx+(sw-(l_b[2]-l_b[0]))/2, scy+170), s["l"], fill=(148, 163, 184, 255), font=f_stat_l)
         draw.text((sx+30, scy+25), s["i"], fill=(255,255,255,255), font=f_emoji)
 
-    # 4. ПРОГРЕСС
     py = 1780; draw.text((PADDING, py), "Прогресс до 1 года", fill=(148, 163, 184, 255), font=f_stat_l)
     draw.rounded_rectangle([PADDING, py+60, WIDTH-PADDING, py+88], radius=14, fill=(30, 41, 59, 255))
     pct = min(100, (days / 365) * 100)
     if pct > 0: draw.rounded_rectangle([PADDING, py+60, PADDING + int((WIDTH-PADDING*2)*pct/100), py+88], radius=14, fill=(14, 165, 233, 255))
     
-    p = os.path.abspath(output_path); os.makedirs(os.path.dirname(p), exist_ok=True)
-    img.convert('RGB').save(p, "PNG", quality=95)
-    return p
+    # Абсолютный путь для сохранения
+    if not os.path.isabs(output_path):
+        output_path = os.path.join(BASE_DIR, output_path)
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    img.convert('RGB').save(output_path, "PNG", quality=95)
+    return output_path
