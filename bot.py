@@ -521,9 +521,10 @@ async def cmd_setai(message: Message, command: CommandObject):
         try:
             await bot.send_message(
                 user["user_id"],
-                "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
+                "🎉 Вам открыт доступ к ИИ-ассистенту!\n\n"
                 "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
-                "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+                "Используйте кнопку \"Написать ассистенту\" в разделе помощи! 💪",
+                parse_mode=None
             )
             logger.info(f"/setai: уведомление отправлено user_id={user['user_id']}")
         except Exception as e:
@@ -585,9 +586,10 @@ async def cmd_setai_uid(message: Message, command: CommandObject):
     try:
         await bot.send_message(
             target_user_id,
-            "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
+            "🎉 Вам открыт доступ к ИИ-ассистенту!\n\n"
             "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
-            "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+            "Используйте кнопку \"Написать ассистенту\" в разделе помощи! 💪",
+            parse_mode=None
         )
     except Exception as e:
         logger.error(f"Не удалось уведомить пользователя {target_user_id}: {e}")
