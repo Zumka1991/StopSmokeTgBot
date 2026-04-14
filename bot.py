@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
@@ -24,7 +26,11 @@ from keyboards import (
     get_price_keyboard,
     get_back_keyboard,
     get_rating_keyboard,
-    get_rating_confirm_keyboard
+    get_rating_confirm_keyboard,
+    get_diary_menu_keyboard,
+    get_diary_dates_keyboard,
+    get_diary_delete_date_keyboard,
+    get_diary_confirm_delete_keyboard
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
 from share_card import create_share_card
@@ -47,6 +53,12 @@ bot = Bot(
 )
 dp = Dispatcher()
 scheduler = AsyncIOScheduler()
+
+
+# ============ FSM ДЛЯ ДНЕВНИКА ============
+
+class DiaryState(StatesGroup):
+    waiting_for_text = State()
 
 
 class ActivityTrackerMiddleware:
@@ -868,6 +880,243 @@ async def handle_date_input(message: Message):
             "Используйте формат: ДД.ММ.ГГГГ",
             reply_markup=get_main_keyboard()
         )
+
+
+# ============ ДНЕВНИК ============
+
+@dp.message(F.text == "📓 Дневник")
+async def cmd_diary(message: Message):
+    """Главное меню дневника"""
+    await message.answer(
+        "📓 *Дневник*\n\n"
+        "Записывайте свои мысли, чувства и наблюдения.\n"
+        "Это помогает осознать прогресс и справиться с трудностями.\n\n"
+        "Что хотите сделать?",
+        reply_markup=get_diary_menu_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "diary_menu")
+async def callback_diary_menu(callback: CallbackQuery):
+    """Возврат в меню дневника"""
+    await callback.message.edit_text(
+        "📓 *Дневник*\n\n"
+        "Что хотите сделать?",
+        reply_markup=get_diary_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "diary_add")
+async def callback_diary_add(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления записи"""
+    await callback.message.edit_text(
+        "✏️ *Новая запись в дневнике*\n\n"
+        "Введите дату в формате ДД.ММ.ГГГГ\n"
+        "Например: 14.04.2026\n\n"
+        "Или отправьте дату сегодняшнего дня кнопкой ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📅 Сегодня",
+                    callback_data="diary_date_today"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="diary_menu"
+                )
+            ]
+        ])
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "diary_date_today")
+async def callback_diary_date_today(callback: CallbackQuery, state: FSMContext):
+    """Выбор сегодняшней даты"""
+    today = datetime.now().strftime("%d.%m.%Y")
+    await state.update_data(diary_date=today)
+    await state.set_state(DiaryState.waiting_for_text)
+
+    await callback.message.edit_text(
+        f"📅 *Дата записи:* {today}\n\n"
+        "Напишите свой текст для дневника.\n"
+        "Это может быть всё что угодно:\n"
+        "• Как вы себя чувствуете\n"
+        "• Что мотивирует\n"
+        "• Какие трудности\n"
+        "• Маленькие победы\n\n"
+        "_Отправьте текст сообщения:_",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="diary_menu"
+                )
+            ]
+        ])
+    )
+    await callback.answer()
+
+
+@dp.message(DiaryState.waiting_for_text)
+async def handle_diary_entry(message: Message, state: FSMContext):
+    """Обработка текста записи дневника"""
+    user_data = await state.get_data()
+    entry_date = user_data.get("diary_date")
+
+    if not entry_date:
+        await message.answer("❌ Ошибка. Попробуйте снова через меню дневника.")
+        await state.clear()
+        return
+
+    entry_text = message.text
+    await db.add_diary_entry(message.from_user.id, entry_date, entry_text)
+
+    await state.clear()
+
+    await message.answer(
+        f"✅ *Запись сохранена!*\n\n"
+        f"📅 Дата: *{entry_date}*\n"
+        f"📝 Текст: {entry_text[:100]}{'...' if len(entry_text) > 100 else ''}\n\n"
+        "Хотите добавить ещё одну запись?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Добавить ещё",
+                    callback_data="diary_add"
+                ),
+                InlineKeyboardButton(
+                    text="📓 В меню",
+                    callback_data="diary_menu"
+                )
+            ]
+        ])
+    )
+
+
+@dp.callback_query(F.data == "diary_read")
+async def callback_diary_read(callback: CallbackQuery):
+    """Показать список дат"""
+    dates = await db.get_diary_dates(callback.from_user.id)
+
+    if not dates:
+        await callback.message.edit_text(
+            "📖 *Записей пока нет*\n\n"
+            "Начните вести дневник — это помогает\n"
+            "осознать свой прогресс!\n\n"
+            "_Отправьте текст в любое время._",
+            reply_markup=get_diary_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "📖 *Выберите дату для просмотра:*\n\n"
+        "Нажмите на дату, чтобы прочитать записи:",
+        reply_markup=get_diary_dates_keyboard(dates)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("diary_date_"))
+async def callback_diary_show_entries(callback: CallbackQuery):
+    """Показать записи за выбранную дату"""
+    date_str = callback.data.replace("diary_date_", "")
+
+    entries = await db.get_diary_entries_by_date(callback.from_user.id, date_str)
+
+    if not entries:
+        await callback.answer("Записей нет за эту дату", show_alert=True)
+        return
+
+    text = f"📅 *Записи за {date_str}:*\n\n"
+    for i, entry in enumerate(entries, 1):
+        text += f"*{i}.* {entry['entry_text']}\n\n"
+
+    text += f"_Всего записей: {len(entries)}_"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад к датам",
+                    callback_data="diary_read"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📓 Меню дневника",
+                    callback_data="diary_menu"
+                )
+            ]
+        ])
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "diary_delete")
+async def callback_diary_delete(callback: CallbackQuery):
+    """Показать список дат для удаления"""
+    dates = await db.get_diary_dates(callback.from_user.id)
+
+    if not dates:
+        await callback.message.edit_text(
+            "🗑️ *Нечего удалять*\n\n"
+            "У вас пока нет записей в дневнике.",
+            reply_markup=get_diary_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "🗑️ *Выберите дату для удаления:*\n\n"
+        "Все записи за эту дату будут удалены.",
+        reply_markup=get_diary_delete_date_keyboard(dates)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("diary_del_date_"))
+async def callback_diary_del_confirm(callback: CallbackQuery):
+    """Подтверждение удаления записей"""
+    date_str = callback.data.replace("diary_del_date_", "")
+
+    entries = await db.get_diary_entries_by_date(callback.from_user.id, date_str)
+    count = len(entries)
+
+    await callback.message.edit_text(
+        f"⚠️ *Удалить записи за {date_str}?*\n\n"
+        f"Будет удалено записей: *{count}*\n\n"
+        "_Это действие нельзя отменить!_",
+        reply_markup=get_diary_confirm_delete_keyboard(date_str)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("diary_del_confirm_"))
+async def callback_diary_del_execute(callback: CallbackQuery):
+    """Выполнение удаления"""
+    date_str = callback.data.replace("diary_del_confirm_", "")
+
+    deleted = await db.delete_diary_entries_by_date(callback.from_user.id, date_str)
+
+    await callback.message.edit_text(
+        f"🗑️ *Удалено {deleted} записей за {date_str}*\n\n"
+        "Вернуться в меню дневника?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📓 Меню дневника",
+                    callback_data="diary_menu"
+                )
+            ]
+        ])
+    )
+    await callback.answer("Записи удалены")
 
 
 # ============ ПЛАНИРОВЩИК ============

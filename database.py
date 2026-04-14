@@ -63,6 +63,17 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS diary_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                entry_date DATE,
+                entry_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        """)
+
         await db.commit()
 
 
@@ -289,3 +300,54 @@ async def get_user_stats(user_id: int) -> dict:
         relapse_count = row[0] if row else 0
 
         return {"relapse_count": relapse_count}
+
+
+# ===== ДНЕВНИК =====
+
+async def add_diary_entry(user_id: int, entry_date: str, entry_text: str) -> bool:
+    """Добавление записи в дневник"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT INTO diary_entries (user_id, entry_date, entry_text) VALUES (?, ?, ?)",
+            (user_id, entry_date, entry_text)
+        )
+        await db.commit()
+        return True
+
+
+async def get_diary_dates(user_id: int) -> list:
+    """Получение уникальных дат с записями"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """SELECT DISTINCT entry_date FROM diary_entries
+               WHERE user_id = ?
+               ORDER BY entry_date DESC""",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
+
+async def get_diary_entries_by_date(user_id: int, entry_date: str) -> list:
+    """Получение записей за определённую дату"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT * FROM diary_entries
+               WHERE user_id = ? AND entry_date = ?
+               ORDER BY created_at ASC""",
+            (user_id, entry_date)
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_diary_entries_by_date(user_id: int, entry_date: str) -> int:
+    """Удаление всех записей за определённую дату"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM diary_entries WHERE user_id = ? AND entry_date = ?",
+            (user_id, entry_date)
+        )
+        await db.commit()
+        return cursor.rowcount

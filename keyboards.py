@@ -19,11 +19,12 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🎯 Достижения")
             ],
             [
-                KeyboardButton(text="⚙️ Настройки"),
-                KeyboardButton(text="❓ Помощь")
+                KeyboardButton(text="📓 Дневник"),
+                KeyboardButton(text="⚙️ Настройки")
             ],
             [
-                KeyboardButton(text="🌐 Сообщество")
+                KeyboardButton(text="🌐 Сообщество"),
+                KeyboardButton(text="❓ Помощь")
             ]
         ],
         resize_keyboard=True
@@ -130,6 +131,86 @@ def get_rating_confirm_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="🙈 Скрыть из рейтинга",
                 callback_data="hide_from_rating"
+            )
+        ]
+    ])
+    return keyboard
+
+
+def get_diary_menu_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню дневника"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✏️ Добавить запись",
+                callback_data="diary_add"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📖 Прочитать записи",
+                callback_data="diary_read"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🗑️ Удалить записи",
+                callback_data="diary_delete"
+            )
+        ]
+    ])
+    return keyboard
+
+
+def get_diary_dates_keyboard(dates: list) -> InlineKeyboardMarkup:
+    """Клавиатура с датами записей"""
+    buttons = []
+    for date_str in dates:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📅 {date_str}",
+                callback_data=f"diary_date_{date_str}"
+            )
+        ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="diary_menu"
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_diary_delete_date_keyboard(dates: list) -> InlineKeyboardMarkup:
+    """Клавиатура с датами для удаления"""
+    buttons = []
+    for date_str in dates:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🗑️ {date_str}",
+                callback_data=f"diary_del_date_{date_str}"
+            )
+        ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="diary_menu"
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_diary_confirm_delete_keyboard(date_str: str) -> InlineKeyboardMarkup:
+    """Подтверждение удаления записей за дату"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Да, удалить",
+                callback_data=f"diary_del_confirm_{date_str}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="diary_delete"
             )
         ]
     ])
