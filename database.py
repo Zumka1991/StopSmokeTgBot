@@ -351,3 +351,13 @@ async def delete_diary_entries_by_date(user_id: int, entry_date: str) -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+async def make_all_users_visible() -> int:
+    """Сделать всех пользователей с quit_date видимыми в рейтинге"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE users SET rating_visible = 1 WHERE quit_date IS NOT NULL"
+        )
+        await db.commit()
+        return cursor.rowcount

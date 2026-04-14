@@ -196,6 +196,18 @@ async def cmd_help(message: Message):
     await message.answer(help_text)
 
 
+@dp.message(Command("visibleall"))
+async def cmd_visibleall(message: Message):
+    """Сделать всех пользователей видимыми в рейтинге"""
+    count = await db.make_all_users_visible()
+
+    await message.answer(
+        f"✅ *Рейтинг обновлён!*\n\n"
+        f"Видимых пользователей: *{count}*\n\n"
+        "Все, кто указал дату отказа, теперь видны в рейтинге."
+    )
+
+
 @dp.message(Command("progress"))
 @dp.message(F.text == "📊 Мой прогресс")
 async def cmd_progress(message: Message):
