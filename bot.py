@@ -170,6 +170,16 @@ async def cmd_start(message: Message, command: CommandObject):
     user = await db.get_user(user_id)
 
     if is_new or not user.get("quit_date"):
+        # Проверяем режим ИИ
+        free_mode = await db.get_free_ai_mode()
+        
+        if free_mode:
+            ai_text = """🤖 *ИИ-Поддержка:*
+Вам доступен наш умный ИИ-ассистент, который поможет справиться с тягой в любую минуту!"""
+        else:
+            ai_text = """🤖 *ИИ-Поддержка:*
+Пригласите хотя бы одного друга, и вам откроется доступ к нашему умному ИИ-ассистенту, который поможет справиться с тягой в любую минуту!"""
+
         welcome_text = f"""
 🚭 *Добро пожаловать в StopSmoke Bot!*
 
@@ -184,8 +194,7 @@ async def cmd_start(message: Message, command: CommandObject):
 • Вести рейтинг с другими участниками
 • Отмечать твои достижения
 
-🤖 *ИИ-Поддержка:*
-Пригласите хотя бы одного друга, и вам откроется доступ к нашему умному ИИ-ассистенту, который поможет справиться с тягой в любую минуту!
+{ai_text}
 
 🌐 *Наше сообщество:*
 🔗 https://stopsmoke.info
@@ -208,6 +217,14 @@ async def cmd_start(message: Message, command: CommandObject):
 @dp.message(F.text == "❓ Помощь / ИИ поддержка")
 async def cmd_help(message: Message):
     """Помощь и ИИ поддержка"""
+    # Проверяем режим ИИ
+    free_mode = await db.get_free_ai_mode()
+    
+    if free_mode:
+        ai_access_text = "ИИ-ассистент доступен для всех пользователей!"
+    else:
+        ai_access_text = "Доступ открывается после приглашения хотя бы одного друга!"
+
     help_text = f"""
 🚭 *StopSmoke Bot — Помощь*
 
@@ -222,8 +239,8 @@ async def cmd_help(message: Message):
 
 🤖 *ИИ Поддержка*
 
-Наш ИИ-ассистент поможет вам справиться с тягой к курению и ответит на любые вопросы. 
-Доступ открывается после приглашения хотя бы одного друга!
+Наш ИИ-ассистент поможет вам справиться с тягой к курению и ответит на любые вопросы.
+{ai_access_text}
 """
     await message.answer(help_text, reply_markup=get_ai_keyboard())
 
@@ -603,6 +620,37 @@ async def cmd_setai_uid(message: Message, command: CommandObject):
     except Exception as e:
         logger.error(f"Не удалось уведомить пользователя {target_user_id}: {e}")
         await message.answer(f"⚠️ Не удалось отправить уведомление. Возможно, бот заблокирован пользователем.")
+
+
+@dp.message(Command("freeai"))
+async def cmd_freeai(message: Message):
+    """Переключение бесплатного режима ИИ для всех пользователей (только для админов)"""
+    username = message.from_user.username or ""
+
+    if not is_admin(username):
+        await message.answer("⛔ У вас нет прав на эту команду.")
+        return
+
+    # Переключаем режим
+    is_enabled = await db.toggle_free_ai_mode()
+
+    if is_enabled:
+        await message.answer(
+            "✅ *Бесплатный режим ИИ включён!*\n\n"
+            "🎉 Теперь *все пользователи* могут пользоваться ИИ-ассистентом "
+            "без необходимости приглашать друга.\n\n"
+            "💡 Для отключения используйте /freeai повторно."
+        )
+        logger.info("/freeai: бесплатный режим ИИ включён")
+    else:
+        await message.answer(
+            "🔒 *Бесплатный режим ИИ отключён*\n\n"
+            "Теперь ИИ-ассистент доступен только пользователям, которые:\n"
+            "• Пригласили хотя бы одного друга\n"
+            "• Или получили доступ вручную (через /setai)\n\n"
+            "💡 Для включения используйте /freeai повторно."
+        )
+        logger.info("/freeai: бесплатный режим ИИ отключён")
 
 
 @dp.message(Command("stats"))

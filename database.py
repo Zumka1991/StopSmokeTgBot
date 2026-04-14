@@ -581,7 +581,11 @@ async def set_broadcast_sent(key: str):
 
 
 async def has_user_ai_access(user_id: int) -> bool:
-    """Проверка доступа к ИИ (по приглашению или вручную)"""
+    """Проверка доступа к ИИ (по приглашению, вручную или глобальному режиму)"""
+    # Сначала проверяем глобальный бесплатный режим
+    if await get_free_ai_mode():
+        return True
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT ai_unlocked, referred_by FROM users WHERE user_id = ?", (user_id,)
@@ -637,3 +641,26 @@ async def get_all_user_ids() -> list[int]:
         cursor = await db.execute("SELECT user_id FROM users")
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
+
+
+async def get_free_ai_mode() -> bool:
+    """Проверка, включен ли глобальный бесплатный режим ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT value FROM global_settings WHERE key = 'free_ai_mode'"
+        )
+        row = await cursor.fetchone()
+        return row is not None and row[0] == "enabled"
+
+
+async def toggle_free_ai_mode() -> bool:
+    """Переключение глобального бесплатного режима ИИ. Возвращает новое состояние."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        current = await get_free_ai_mode()
+        new_value = "enabled" if not current else "disabled"
+        await db.execute(
+            "INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
+            ('free_ai_mode', new_value)
+        )
+        await db.commit()
+        return not current
