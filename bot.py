@@ -424,9 +424,12 @@ async def cmd_reset_ai(message: Message):
 async def cmd_mail(message: Message, command: CommandObject):
     """Рассылка сообщения всем пользователям (только для админов)"""
     username = message.from_user.username or ""
+    user_id = message.from_user.id
+    
+    logger.info(f"/mail от user_id={user_id}, username={username}, ADMIN_USERNAMES={ADMIN_USERNAMES}")
     
     if not is_admin(username):
-        await message.answer("⛔ У вас нет прав для выполнения этой команды.")
+        await message.answer(f"⛔ У вас нет прав. Ваш username: @{username if username else 'НЕТ'}")
         return
     
     mail_text = command.args
