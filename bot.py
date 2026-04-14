@@ -330,7 +330,13 @@ async def show_rating_page(message_or_callback, page: int):
 
         global_rank = offset + i + 1
         medal = medals[i] if (page == 0 and i < 3) else f"{global_rank}."
-        name = user.get("first_name") or user.get("username") or "Аноним"
+        
+        # Формируем имя с username в скобках
+        username = user.get("username")
+        if username:
+            name = f"{user.get('first_name', 'Аноним')} (@{username})"
+        else:
+            name = user.get("first_name") or "Аноним"
 
         is_current = "👈 ВЫ" if user["user_id"] == current_user_id else ""
 
