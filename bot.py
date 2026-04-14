@@ -394,6 +394,17 @@ async def cmd_community(message: Message):
     )
 
 
+@dp.message(Command("resetai"))
+async def cmd_reset_ai(message: Message):
+    """Обнуление счётчика вопросов к ИИ"""
+    await db.reset_ai_counter(message.from_user.id)
+    await message.answer(
+        "✅ *Счётчик общения с ИИ обнулён!*\n\n"
+        "Теперь вам снова доступно 10 вопросов на сегодня.",
+        reply_markup=get_main_keyboard()
+    )
+
+
 @dp.message(F.text == "🎯 Достижения")
 async def cmd_achievements(message: Message):
     """Показать достижения"""

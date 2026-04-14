@@ -483,6 +483,16 @@ async def clear_ai_chat_history(user_id: int):
         await db.commit()
 
 
+async def reset_ai_counter(user_id: int):
+    """Обнуление счётчика вопросов к ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET ai_questions_today = 0 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()
+
+
 async def is_broadcast_sent(key: str) -> bool:
     """Проверка, была ли отправлена рассылка"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
