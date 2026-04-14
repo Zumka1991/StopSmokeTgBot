@@ -1,2 +1,9 @@
 .env
-data
+
+# Игнорируем базу и временные фото
+data/stopsmoke.db
+data/*.png
+
+# Но при этом сохраняем шрифты и логотип
+!data/fonts/
+!data/logo_v3.png

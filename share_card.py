@@ -8,7 +8,7 @@ import platform
 
 logger = logging.getLogger(__name__)
 
-# Пути к шрифтам
+# Расширенные пути к шрифтам
 FONT_PATHS = {
     "win": {
         "regular": "C:/Windows/Fonts/segoeui.ttf",
@@ -16,23 +16,61 @@ FONT_PATHS = {
         "emoji": "C:/Windows/Fonts/seguiemj.ttf"
     },
     "linux": {
-        "regular": ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
-        "bold": ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"],
-        "emoji": ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"]
+        "regular": [
+            "./data/fonts/regular.ttf", # В первую очередь ищем в проекте
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+        ],
+        "bold": [
+            "./data/fonts/bold.ttf", # В проекте
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"
+        ],
+        "emoji": [
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+        ]
     }
 }
 
 def get_font_path(type_key: str) -> str:
     os_name = platform.system().lower()
-    if "windows" in os_name: return FONT_PATHS["win"][type_key]
+    if "windows" in os_name:
+        return FONT_PATHS["win"][type_key]
+    
+    # Для Linux/других проверяем список путей
     paths = FONT_PATHS["linux"][type_key]
     for p in paths:
-        if os.path.exists(p): return p
+        if os.path.exists(p):
+            return p
+    
+    # Если ничего не нашли, возвращаем первый из списка для попытки загрузки
     return paths[0]
 
 def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
-    try: return ImageFont.truetype(get_font_path(type_key), size)
-    except: return ImageFont.load_default()
+    path = get_font_path(type_key)
+    try:
+        # Пытаемся загрузить шрифт
+        return ImageFont.truetype(path, size)
+    except Exception as e:
+        logger.warning(f"Шрифт {type_key} не найден по пути {path}. Используем fallback.")
+        
+        # Крайний случай: пробуем найти хоть какую-то кириллицу в Linux
+        if platform.system().lower() != "windows":
+            fallbacks = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "Arial.ttf" # PIL иногда находит системные по имени
+            ]
+            for f in fallbacks:
+                try: return ImageFont.truetype(f, size)
+                except: continue
+                
+        return ImageFont.load_default()
 
 def draw_mesh_background(width: int, height: int):
     base = Image.new('RGBA', (width, height), (7, 10, 19, 255))
@@ -73,8 +111,7 @@ def create_ultra_minimal_logo(size=300):
             icon_size = size - pad * 2
             icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
             badge.paste(icon, (pad, pad), icon)
-        except:
-            pass
+        except: pass
     return badge
 
 def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, output_path="data/share_card.png"):
@@ -83,19 +120,23 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     img = draw_mesh_background(WIDTH, HEIGHT)
     draw = ImageDraw.Draw(img, 'RGBA')
 
+    # Загрузка шрифтов
     f_h1 = get_font("bold", 76); f_days = get_font("bold", 240); f_label = get_font("regular", 44)
     f_stat_v = get_font("bold", 68); f_stat_l = get_font("regular", 30)
     f_emoji = get_font("emoji", 48)
 
+    # 1. ЛОГОТИП
     logo_size = 300
     logo = create_ultra_minimal_logo(logo_size)
     img.paste(logo, ((WIDTH - logo_size) // 2, 100), logo)
 
+    # Заголовок
     bbox = draw.textbbox((0, 0), first_name, font=f_h1)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 450), first_name, fill=(255, 255, 255, 255), font=f_h1)
     sub = "на пути к здоровью"; bbox = draw.textbbox((0, 0), sub, font=f_label)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 540), sub, fill=(148, 163, 184, 255), font=f_label)
 
+    # 2. КАРТОЧКА ДНЕЙ
     days = delta.days; cy, ch = 650, 480
     draw_glass_card(img, PADDING, cy, WIDTH - PADDING * 2, ch)
     txt_d = str(days); bbox = draw.textbbox((0, 0), txt_d, font=f_days)
@@ -110,6 +151,7 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     h_txt = f"и {delta.seconds // 3600} часов свободы"; bbox = draw.textbbox((0, 0), h_txt, font=f_label)
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 390), h_txt, fill=(148, 163, 184, 255), font=f_label)
 
+    # 3. СТАТИСТИКА
     sy, sw, sh = 1180, (WIDTH - PADDING * 2 - 40) // 2, 260
     st_data = [{"v": f"{savings:,.0f}₽", "l": "Сэкономлено", "i": "💰"}, {"v": f"{cigarettes:,}", "l": "Не выкурено", "i": "🚭"}, {"v": f"{int(cigarettes * 5 / 60)}ч", "l": "Жизни спасено", "i": "❤️"}, {"v": f"{quit_date_str}", "l": "Дата старта", "i": "📅"}]
     for i, s in enumerate(st_data):
@@ -119,6 +161,7 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
         l_b = draw.textbbox((0,0), s["l"], font=f_stat_l); draw.text((sx+(sw-(l_b[2]-l_b[0]))/2, scy+170), s["l"], fill=(148, 163, 184, 255), font=f_stat_l)
         draw.text((sx+30, scy+25), s["i"], fill=(255,255,255,255), font=f_emoji)
 
+    # 4. ПРОГРЕСС
     py = 1780; draw.text((PADDING, py), "Прогресс до 1 года", fill=(148, 163, 184, 255), font=f_stat_l)
     draw.rounded_rectangle([PADDING, py+60, WIDTH-PADDING, py+88], radius=14, fill=(30, 41, 59, 255))
     pct = min(100, (days / 365) * 100)
