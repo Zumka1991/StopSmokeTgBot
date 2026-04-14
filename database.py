@@ -493,6 +493,68 @@ async def reset_ai_counter(user_id: int):
         await db.commit()
 
 
+async def get_bot_stats() -> dict:
+    """Получение общей статистики бота"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute('SELECT COUNT(*) FROM users')
+        total_users = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(*) FROM users WHERE quit_date IS NOT NULL')
+        active_users = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = DATE('now')")
+        new_today = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) >= DATE('now', '-7 days')")
+        new_week = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) >= DATE('now', '-30 days')")
+        new_month = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL')
+        total_referrals = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(DISTINCT referred_by) FROM users WHERE referred_by IS NOT NULL')
+        users_with_referrals = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(*) FROM achievements')
+        total_achievements = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(*) FROM diary_entries')
+        diary_entries = (await cursor.fetchone())[0]
+
+        cursor = await db.execute('SELECT COUNT(*) FROM relapses')
+        total_relapses = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("""SELECT AVG(julianday('now') - julianday(quit_date)) FROM users WHERE quit_date IS NOT NULL""")
+        avg_days_row = await cursor.fetchone()
+        avg_days = avg_days_row[0] if avg_days_row and avg_days_row[0] else 0
+
+        cursor = await db.execute("""SELECT SUM((julianday('now') - julianday(quit_date)) * cigarettes_per_day / cigarettes_in_pack * price_per_pack) FROM users WHERE quit_date IS NOT NULL""")
+        total_savings_row = await cursor.fetchone()
+        total_savings = total_savings_row[0] if total_savings_row and total_savings_row[0] else 0
+
+        cursor = await db.execute("""SELECT SUM((julianday('now') - julianday(quit_date)) * cigarettes_per_day) FROM users WHERE quit_date IS NOT NULL""")
+        total_cigarettes_row = await cursor.fetchone()
+        total_cigarettes = int(total_cigarettes_row[0]) if total_cigarettes_row and total_cigarettes_row[0] else 0
+
+        return {
+            'total_users': total_users,
+            'active_users': active_users,
+            'new_today': new_today,
+            'new_week': new_week,
+            'new_month': new_month,
+            'total_referrals': total_referrals,
+            'users_with_referrals': users_with_referrals,
+            'total_achievements': total_achievements,
+            'diary_entries': diary_entries,
+            'total_relapses': total_relapses,
+            'avg_days': avg_days,
+            'total_savings': total_savings,
+            'total_cigarettes': total_cigarettes
+        }
+
+
 async def is_broadcast_sent(key: str) -> bool:
     """Проверка, была ли отправлена рассылка"""
     async with aiosqlite.connect(DATABASE_PATH) as db:

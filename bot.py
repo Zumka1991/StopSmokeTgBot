@@ -405,6 +405,120 @@ async def cmd_reset_ai(message: Message):
     )
 
 
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Показать статистику бота"""
+    stats = await db.get_bot_stats()
+    
+    brief_text = f"""
+📊 *Статистика StopSmoke Bot*
+
+👥 *Пользователи:*
+• Всего: *{stats['total_users']}*
+• Активных: *{stats['active_users']}*
+• Новых сегодня: *+{stats['new_today']}*
+• Новых за неделю: *+{stats['new_week']}*
+• Новых за месяц: *+{stats['new_month']}*
+
+🤝 *Рефералы:*
+• Переходов по ссылкам: *{stats['total_referrals']}*
+• Пользователей с рефералами: *{stats['users_with_referrals']}*
+
+💰 *Общий прогресс:*
+• Сэкономлено: *{stats['total_savings']:,.0f}₽*
+• Не выкурено: *{stats['total_cigarettes']:,} сигарет*
+"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📈 Расширенная", callback_data="stats_extended")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+    
+    await message.answer(brief_text, reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "stats_extended")
+async def callback_stats_extended(callback: CallbackQuery):
+    """Расширенная статистика"""
+    stats = await db.get_bot_stats()
+    
+    extended_text = f"""
+📊 *Расширенная статистика*
+
+👥 *Пользователи:*
+• Всего в боте: *{stats['total_users']}*
+• С датой отказа: *{stats['active_users']}*
+• Новых сегодня: *+{stats['new_today']}*
+• Новых за неделю: *+{stats['new_week']}*
+• Новых за месяц: *+{stats['new_month']}*
+
+━━━━━━━━━━━━━━━━━━━━
+
+🚭 *Прогресс отказа:*
+• Всего не выкурено: *{stats['total_cigarettes']:,} сигарет*
+• Сэкономлено денег: *{stats['total_savings']:,.0f}₽*
+• Средний срок: *{stats['avg_days']:.1f} дней*
+
+━━━━━━━━━━━━━━━━━━━━
+
+🤝 *Реферальная программа:*
+• Всего переходов: *{stats['total_referrals']}*
+• Пользователей с рефералами: *{stats['users_with_referrals']}*
+
+━━━━━━━━━━━━━━━━━━━━
+
+🎯 *Достижения:*
+• Выдано достижений: *{stats['total_achievements']}*
+
+📓 *Дневник:*
+• Записей: *{stats['diary_entries']}*
+
+🔄 *Срывы:*
+• Всего срывов: *{stats['total_relapses']}*
+"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📉 Краткая", callback_data="stats_brief")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+    
+    await callback.message.edit_text(extended_text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "stats_brief")
+async def callback_stats_brief(callback: CallbackQuery):
+    """Краткая статистика"""
+    stats = await db.get_bot_stats()
+    
+    brief_text = f"""
+📊 *Статистика StopSmoke Bot*
+
+👥 *Пользователи:*
+• Всего: *{stats['total_users']}*
+• Активных: *{stats['active_users']}*
+• Новых сегодня: *+{stats['new_today']}*
+• Новых за неделю: *+{stats['new_week']}*
+• Новых за месяц: *+{stats['new_month']}*
+
+🤝 *Рефералы:*
+• Переходов по ссылкам: *{stats['total_referrals']}*
+• Пользователей с рефералами: *{stats['users_with_referrals']}*
+
+💰 *Общий прогресс:*
+• Сэкономлено: *{stats['total_savings']:,.0f}₽*
+• Не выкурено: *{stats['total_cigarettes']:,} сигарет*
+"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📈 Расширенная", callback_data="stats_extended")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+    ])
+    
+    await callback.message.edit_text(brief_text, reply_markup=keyboard)
+    await callback.answer()
+
+
 @dp.message(F.text == "🎯 Достижения")
 async def cmd_achievements(message: Message):
     """Показать достижения"""
