@@ -605,17 +605,29 @@ async def unlock_user_ai(user_id: int) -> bool:
 
 
 async def get_user_by_username(username: str) -> Optional[dict]:
-    """Получение пользователя по username"""
+    """Получение пользователя по username (гибкий поиск)"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        username_clean = username.lstrip("@")
+        username_clean = username.lstrip("@").lower()
+        
+        # Сначала точное совпадение
         cursor = await db.execute(
-            "SELECT * FROM users WHERE username = ? OR username = ?",
+            "SELECT * FROM users WHERE LOWER(username) = ? OR LOWER(username) = ?",
             (username_clean, f"@{username_clean}")
         )
         row = await cursor.fetchone()
         if row:
             return dict(row)
+        
+        # Потом LIKE (на случай если есть скрытые символы)
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE LOWER(username) LIKE ? OR LOWER(username) LIKE ?",
+            (f"%{username_clean}%", f"%@{username_clean}%")
+        )
+        row = await cursor.fetchone()
+        if row:
+            return dict(row)
+        
         return None
 
 
