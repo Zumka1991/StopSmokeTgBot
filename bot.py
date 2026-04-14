@@ -450,11 +450,16 @@ async def send_broadcast_mail(admin_id: int, text: str):
     sent = 0
     errors = 0
     
-    for user_id in user_ids:
+    for i, user_id in enumerate(user_ids):
         try:
             await bot.send_message(user_id, text)
             sent += 1
-            await asyncio.sleep(0.05)  # Небольшая задержка между сообщениями
+            # Задержка 0.3 сек (≈3 сообщения/сек) - безопасно для Telegram
+            await asyncio.sleep(0.3)
+            
+            # Логируем прогресс каждые 50 сообщений
+            if sent % 50 == 0:
+                logger.info(f"Рассылка: отправлено {sent}/{len(user_ids)}")
         except Exception as e:
             errors += 1
             logger.error(f"Ошибка рассылки пользователю {user_id}: {e}")
