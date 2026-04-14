@@ -36,31 +36,45 @@ FONT_PATHS = {
 }
 
 def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
-    """Загрузка шрифта с подробным логированием для диагностики"""
+    """Загрузка шрифта с fallback на все доступные варианты"""
     os_name = platform.system().lower()
-    
+
     if "windows" in os_name:
-        path = FONT_PATHS["win"][type_key]
-        try:
-            return ImageFont.truetype(path, size)
-        except:
-            return ImageFont.load_default()
-    
-    # Логика для Linux
-    paths = FONT_PATHS["linux"][type_key]
+        path = FONT_PATHS["win"].get(type_key)
+        if path and os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                pass
+
+    # Linux / общий fallback
+    paths = FONT_PATHS["linux"].get(type_key, [])
+    if isinstance(paths, str):
+        paths = [paths]
     for p in paths:
         if os.path.exists(p):
             try:
-                f = ImageFont.truetype(p, size)
-                # Логируем успех только один раз для краткости
-                logger.info(f"Шрифт {type_key} успешно загружен из: {p}")
-                return f
-            except Exception as e:
-                logger.error(f"Ошибка загрузки существующего файла {p}: {e}")
-        else:
-            logger.debug(f"Файл шрифта не найден по пути: {p}")
-            
-    logger.error(f"CRITICAL: Все варианты шрифта {type_key} не найдены или не загрузились! Использование fallback.")
+                return ImageFont.truetype(p, size)
+            except:
+                pass
+
+    # Пробуем любые TTF шрифты в системе
+    common_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+    ]
+    for p in common_paths:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except:
+                pass
+
+    # Финальный fallback
     return ImageFont.load_default()
 
 def draw_mesh_background(width: int, height: int):
@@ -112,7 +126,6 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
 
     f_h1 = get_font("bold", 76); f_days = get_font("bold", 240); f_label = get_font("regular", 44)
     f_stat_v = get_font("bold", 68); f_stat_l = get_font("regular", 30)
-    f_emoji = get_font("emoji", 48)
 
     logo_size = 300
     logo = create_ultra_minimal_logo(logo_size)
@@ -138,13 +151,12 @@ def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, out
     draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 390), h_txt, fill=(148, 163, 184, 255), font=f_label)
 
     sy, sw, sh = 1180, (WIDTH - PADDING * 2 - 40) // 2, 260
-    st_data = [{"v": f"{savings:,.0f}₽", "l": "Сэкономлено", "i": "💰"}, {"v": f"{cigarettes:,}", "l": "Не выкурено", "i": "🚭"}, {"v": f"{int(cigarettes * 5 / 60)}ч", "l": "Жизни спасено", "i": "❤️"}, {"v": f"{quit_date_str}", "l": "Дата старта", "i": "📅"}]
+    st_data = [{"v": f"{savings:,.0f}₽", "l": "Сэкономлено"}, {"v": f"{cigarettes:,}", "l": "Не выкурено"}, {"v": f"{int(cigarettes * 5 / 60)}ч", "l": "Жизни спасено"}, {"v": f"{quit_date_str}", "l": "Дата старта"}]
     for i, s in enumerate(st_data):
         sx, scy = PADDING + (i%2)*(sw+40), sy + (i//2)*(sh+40)
         draw_glass_card(img, sx, scy, sw, sh, radius=35)
         v_b = draw.textbbox((0,0), s["v"], font=f_stat_v); draw.text((sx+(sw-(v_b[2]-v_b[0]))/2, scy+80), s["v"], fill=(255,255,255,255), font=f_stat_v)
         l_b = draw.textbbox((0,0), s["l"], font=f_stat_l); draw.text((sx+(sw-(l_b[2]-l_b[0]))/2, scy+170), s["l"], fill=(148, 163, 184, 255), font=f_stat_l)
-        draw.text((sx+30, scy+25), s["i"], fill=(255,255,255,255), font=f_emoji)
 
     py = 1780; draw.text((PADDING, py), "Прогресс до 1 года", fill=(148, 163, 184, 255), font=f_stat_l)
     draw.rounded_rectangle([PADDING, py+60, WIDTH-PADDING, py+88], radius=14, fill=(30, 41, 59, 255))
