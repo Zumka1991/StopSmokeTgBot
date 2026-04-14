@@ -21,7 +21,8 @@ from keyboards import (
     get_number_keyboard,
     get_price_keyboard,
     get_back_keyboard,
-    get_rating_keyboard
+    get_rating_keyboard,
+    get_rating_confirm_keyboard
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
 
@@ -43,6 +44,18 @@ bot = Bot(
 )
 dp = Dispatcher()
 scheduler = AsyncIOScheduler()
+
+
+class ActivityTrackerMiddleware:
+    """Middleware для отслеживания активности пользователя"""
+    async def __call__(self, handler, event, data):
+        user = data.get('event_from_user')
+        if user:
+            try:
+                await db.update_user_activity(user.id)
+            except Exception as e:
+                logger.error(f"Ошибка обновления активности: {e}")
+        return await handler(event, data)
 
 
 def format_duration(delta: timedelta) -> str:
@@ -414,6 +427,7 @@ async def cmd_settings(message: Message):
         return
 
     notifications = bool(user.get("notifications_enabled", 1))
+    rating_visible = bool(user.get("rating_visible", 1))
 
     quit_date_str = "Не установлена"
     if user.get("quit_date"):
@@ -428,12 +442,13 @@ async def cmd_settings(message: Message):
 💵 Цена пачки: *{user.get('price_per_pack', 150):.0f}₽*
 📦 Сигарет в пачке: *{user.get('cigarettes_in_pack', 20)}*
 🔔 Уведомления: *{'Включены' if notifications else 'Выключены'}*
+👁️ В рейтинге: *{'Виден' if rating_visible else 'Скрыт'}*
 
 _Нажмите кнопку для изменения:_
 """
     await message.answer(
         settings_text,
-        reply_markup=get_settings_keyboard(notifications)
+        reply_markup=get_settings_keyboard(notifications, rating_visible)
     )
 
 
@@ -496,6 +511,7 @@ async def callback_toggle_notifications(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
     current = bool(user.get("notifications_enabled", 1))
     new_state = not current
+    rating_visible = bool(user.get("rating_visible", 1))
 
     await db.toggle_notifications(callback.from_user.id, new_state)
 
@@ -504,8 +520,56 @@ async def callback_toggle_notifications(callback: CallbackQuery):
 
     # Обновляем клавиатуру
     await callback.message.edit_reply_markup(
-        reply_markup=get_settings_keyboard(new_state)
+        reply_markup=get_settings_keyboard(new_state, rating_visible)
     )
+
+
+@dp.callback_query(F.data == "toggle_rating_visibility")
+async def callback_toggle_rating_visibility(callback: CallbackQuery):
+    """Переключение видимости в рейтинге"""
+    user = await db.get_user(callback.from_user.id)
+    current = bool(user.get("rating_visible", 1))
+    new_state = not current
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    await db.toggle_rating_visibility(callback.from_user.id, new_state)
+
+    status = "виден в рейтинге 👁️" if new_state else "скрыт из рейтинга 🙈"
+    await callback.answer(f"Теперь вы {status}")
+
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=get_settings_keyboard(notifications, new_state)
+    )
+
+
+@dp.callback_query(F.data == "confirm_rating")
+async def callback_confirm_rating(callback: CallbackQuery):
+    """Подтверждение участия в рейтинге"""
+    await db.confirm_rating_participation(callback.from_user.id)
+
+    await callback.message.edit_text(
+        "✅ *Участие подтверждено!*\n\n"
+        "Вы снова видны в рейтинге. Продолжайте держаться! 💪"
+    )
+    await callback.answer("Отлично! Рейтинг обновлён 🏆")
+
+
+@dp.callback_query(F.data == "hide_from_rating")
+async def callback_hide_from_rating(callback: CallbackQuery):
+    """Скрытие из рейтинга"""
+    user = await db.get_user(callback.from_user.id)
+    notifications = bool(user.get("notifications_enabled", 1))
+
+    await db.toggle_rating_visibility(callback.from_user.id, False)
+
+    await callback.message.edit_text(
+        "🙈 *Вы скрыты из рейтинга*\n\n"
+        "Не переживайте! Можете вернуться в любой момент "
+        "через настройки.",
+        reply_markup=get_settings_keyboard(notifications, False)
+    )
+    await callback.answer("Скрыто из рейтинга")
 
 
 @dp.callback_query(F.data == "set_cigarettes")
@@ -591,6 +655,7 @@ async def callback_back_to_settings(callback: CallbackQuery):
     """Возврат в настройки"""
     user = await db.get_user(callback.from_user.id)
     notifications = bool(user.get("notifications_enabled", 1))
+    rating_visible = bool(user.get("rating_visible", 1))
 
     quit_date_str = "Не установлена"
     if user.get("quit_date"):
@@ -605,12 +670,13 @@ async def callback_back_to_settings(callback: CallbackQuery):
 💵 Цена пачки: *{user.get('price_per_pack', 150):.0f}₽*
 📦 Сигарет в пачке: *{user.get('cigarettes_in_pack', 20)}*
 🔔 Уведомления: *{'Включены' if notifications else 'Выключены'}*
+👁️ В рейтинге: *{'Виден' if rating_visible else 'Скрыт'}*
 
 _Нажмите кнопку для изменения:_
 """
     await callback.message.edit_text(
         settings_text,
-        reply_markup=get_settings_keyboard(notifications)
+        reply_markup=get_settings_keyboard(notifications, rating_visible)
     )
     await callback.answer()
 
@@ -832,12 +898,86 @@ async def send_daily_motivation():
             logger.error(f"Ошибка отправки пользователю {user['user_id']}: {e}")
 
 
+async def check_rating_confirmations():
+    """Проверка подтверждения участия в рейтинге"""
+    users = await db.get_users_for_rating_check()
+
+    now = datetime.now()
+
+    for user in users:
+        try:
+            last_active = user.get("last_active")
+            quit_date = user.get("quit_date")
+
+            if not quit_date:
+                continue
+
+            quit_dt = datetime.fromisoformat(quit_date)
+            days_since_quit = (now - quit_dt).days
+
+            # Определяем интервал проверки в зависимости от стажа
+            if days_since_quit <= 30:
+                check_interval = 2  # первые 30 дней — проверка каждые 2 дня
+            elif days_since_quit <= 90:
+                check_interval = 5  # до 90 дней — каждые 5 дней
+            else:
+                check_interval = 7  # старше 90 дней — каждые 7 дней
+
+            if not last_active:
+                # Никогда не был активен — считаем от даты отказа
+                last_active_dt = quit_dt
+            else:
+                last_active_dt = datetime.fromisoformat(last_active)
+
+            days_since_active = (now - last_active_dt).days
+
+            # Если прошло больше интервала — отправляем напоминание
+            if days_since_active >= check_interval:
+                reminder_text = f"""
+⚠️ *Подтвердите участие в рейтинге!*
+
+Вы не заходили в бот уже {days_since_active} дн.
+
+Чтобы остаться в рейтинге, подтвердите участие одним нажатием:
+"""
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="✅ Подтвердить участие",
+                            callback_data="confirm_rating"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="🙈 Скрыть из рейтинга",
+                            callback_data="hide_from_rating"
+                        )
+                    ]
+                ])
+
+                await bot.send_message(user["user_id"], reminder_text, reply_markup=keyboard)
+                logger.info(f"Отправлено напоминание о подтверждении рейтинга пользователю {user['user_id']}")
+
+                # Если прошло в 2 раза больше интервала — скрываем автоматически
+                if days_since_active >= check_interval * 2:
+                    await db.toggle_rating_visibility(user["user_id"], False)
+                    logger.info(f"Пользователь {user['user_id']} автоматически скрыт из рейтинга")
+
+        except Exception as e:
+            logger.error(f"Ошибка проверки рейтинга для пользователя {user.get('user_id')}: {e}")
+
+
 # ============ ЗАПУСК ============
 
 async def on_startup():
     """Действия при запуске"""
     await db.init_db()
     logger.info("База данных инициализирована")
+
+    # Регистрируем middleware
+    dp.message.middleware(ActivityTrackerMiddleware())
+    dp.callback_query.middleware(ActivityTrackerMiddleware())
+    logger.info("Middleware активности зарегистрирован")
 
     # Ежедневная мотивация в 9:00
     scheduler.add_job(
@@ -847,6 +987,16 @@ async def on_startup():
         minute=0,
         id="daily_motivation"
     )
+
+    # Проверка подтверждения рейтинга каждый день в 12:00
+    scheduler.add_job(
+        check_rating_confirmations,
+        "cron",
+        hour=12,
+        minute=0,
+        id="rating_confirmation"
+    )
+
     scheduler.start()
     logger.info("Планировщик запущен")
 

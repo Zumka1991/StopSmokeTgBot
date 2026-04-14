@@ -50,9 +50,10 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
-def get_settings_keyboard(notifications_enabled: bool) -> InlineKeyboardMarkup:
+def get_settings_keyboard(notifications_enabled: bool, rating_visible: bool = True) -> InlineKeyboardMarkup:
     """Клавиатура настроек"""
     notif_text = "🔔 Уведомления: ВКЛ" if notifications_enabled else "🔕 Уведомления: ВЫКЛ"
+    rating_text = "👁️ Видимость в рейтинге: ВКЛ" if rating_visible else "🙈 Видимость в рейтинге: ВЫКЛ"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -65,6 +66,12 @@ def get_settings_keyboard(notifications_enabled: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=notif_text,
                 callback_data="toggle_notifications"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=rating_text,
+                callback_data="toggle_rating_visibility"
             )
         ],
         [
@@ -106,6 +113,23 @@ def get_confirm_reset_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="❌ Отмена",
                 callback_data="cancel_reset"
+            )
+        ]
+    ])
+    return keyboard
+
+
+def get_rating_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения участия в рейтинге"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Подтвердить участие",
+                callback_data="confirm_rating"
+            ),
+            InlineKeyboardButton(
+                text="🙈 Скрыть из рейтинга",
+                callback_data="hide_from_rating"
             )
         ]
     ])

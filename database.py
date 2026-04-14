@@ -22,9 +22,26 @@ async def init_db():
                 price_per_pack REAL DEFAULT 150.0,
                 cigarettes_in_pack INTEGER DEFAULT 20,
                 notifications_enabled INTEGER DEFAULT 1,
+                rating_visible INTEGER DEFAULT 1,
+                rating_last_confirmed TIMESTAMP,
+                last_active TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Миграция: добавляем новые поля если их нет
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN rating_visible INTEGER DEFAULT 1"
+            )
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN rating_last_confirmed TIMESTAMP"
+            )
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN last_active TIMESTAMP"
+            )
+        except Exception:
+            pass  # Поля уже существуют
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS achievements (
@@ -133,6 +150,52 @@ async def toggle_notifications(user_id: int, enabled: bool) -> bool:
         return True
 
 
+async def toggle_rating_visibility(user_id: int, visible: bool) -> bool:
+    """Включение/выключение видимости в рейтинге"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET rating_visible = ?, rating_last_confirmed = ? WHERE user_id = ?",
+            (1 if visible else 0, datetime.now().isoformat(), user_id)
+        )
+        await db.commit()
+        return True
+
+
+async def confirm_rating_participation(user_id: int) -> bool:
+    """Подтверждение участия в рейтинге"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET rating_visible = 1, rating_last_confirmed = ?, last_active = ? WHERE user_id = ?",
+            (datetime.now().isoformat(), datetime.now().isoformat(), user_id)
+        )
+        await db.commit()
+        return True
+
+
+async def update_user_activity(user_id: int) -> bool:
+    """Обновление времени последней активности пользователя"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET last_active = ? WHERE user_id = ?",
+            (datetime.now().isoformat(), user_id)
+        )
+        await db.commit()
+        return True
+
+
+async def get_users_for_rating_check() -> list:
+    """Получение пользователей для проверки подтверждения рейтинга"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT * FROM users
+               WHERE quit_date IS NOT NULL AND rating_visible = 1
+               ORDER BY last_active ASC"""
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 async def get_users_with_notifications() -> list:
     """Получение пользователей с включенными уведомлениями"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -175,7 +238,7 @@ async def get_leaderboard(limit: int = 10, offset: int = 0) -> list:
             """SELECT user_id, username, first_name, quit_date,
                       cigarettes_per_day, price_per_pack, cigarettes_in_pack
                FROM users
-               WHERE quit_date IS NOT NULL
+               WHERE quit_date IS NOT NULL AND rating_visible = 1
                ORDER BY quit_date ASC
                LIMIT ? OFFSET ?""",
             (limit, offset)
