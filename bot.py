@@ -500,7 +500,7 @@ async def cmd_setai(message: Message, command: CommandObject):
                            "• Пользователь не запускал бота (/start)\n"
                            "• У пользователя нет username в Telegram\n"
                            "• Имя указано неверно\n\n"
-                           "💡 Используйте /setaiid <user_id> если знаете Telegram ID пользователя.")
+                           "💡 Используйте /setai_uid <user_id> если знаете Telegram ID пользователя.")
         return
     
     # Открываем доступ к ИИ
@@ -526,8 +526,8 @@ async def cmd_setai(message: Message, command: CommandObject):
         await message.answer(f"⚠️ Не удалось отправить уведомление пользователю. Возможно, он заблокировал бота.")
 
 
-@dp.message(Command("setaiid"))
-async def cmd_setaiid(message: Message, command: CommandObject):
+@dp.message(Command("setai_uid"))
+async def cmd_setai_uid(message: Message, command: CommandObject):
     """Открыть доступ к ИИ пользователю по user_id (только для админов)"""
     username = message.from_user.username or ""
     
@@ -538,8 +538,8 @@ async def cmd_setaiid(message: Message, command: CommandObject):
     user_id_str = command.args
     if not user_id_str:
         await message.answer(
-            "❌ Использование: /setaiid <telegram_user_id>\n\n"
-            "Пример: /setaiid 123456789"
+            "❌ Использование: /setai_uid <telegram_user_id>\n\n"
+            "Пример: /setai_uid 123456789"
         )
         return
     
