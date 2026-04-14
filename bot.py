@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import traceback
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -9,6 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import database as db
@@ -778,30 +780,31 @@ async def callback_share_result(callback: CallbackQuery):
 
         bot_username = (await bot.get_me()).username
 
-        # Отправляем как фото
-        with open(card_path, "rb") as photo:
-            await callback.message.answer_photo(
-                photo=photo,
-                caption=(
-                    f"🚭 *StopSmoke Bot — Мой результат*\n\n"
-                    f"👤 *{first_name}* бросает курить!\n\n"
-                    f"📅 Дата отказа: *{quit_date_str}*\n"
-                    f"💰 Сэкономил: *{savings:,.0f}₽*\n"
-                    f"🚬 Не выкурил: *{cigarettes:,} сигарет*\n\n"
-                    f"💪 Присоединяйся! Бросай курить вместе со мной!"
-                ),
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🚭 Тоже бросить!",
-                            url=f"https://t.me/{bot_username}"
-                        )
-                    ]
-                ])
-            )
+        # Отправляем как фото через FSInputFile
+        photo = FSInputFile(card_path)
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=(
+                f"🚭 *StopSmoke Bot — Мой результат*\n\n"
+                f"👤 *{first_name}* бросает курить!\n\n"
+                f"📅 Дата отказа: *{quit_date_str}*\n"
+                f"💰 Сэкономил: *{savings:,.0f}₽*\n"
+                f"🚬 Не выкурил: *{cigarettes:,} сигарет*\n\n"
+                f"💪 Присоединяйся! Бросай курить вместе со мной!"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚭 Тоже бросить!",
+                        url=f"https://t.me/{bot_username}"
+                    )
+                ]
+            ])
+        )
 
     except Exception as e:
         logger.error(f"Ошибка генерации карточки: {e}")
+        logger.error(traceback.format_exc())
         await callback.message.answer(
             "😔 Не удалось создать карточку. Попробуйте позже.",
             reply_markup=get_main_keyboard()

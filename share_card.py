@@ -1,159 +1,129 @@
-"""Генерация карточки прогресса для шаринга"""
+"""Генерация премиальной карточки прогресса для шаринга"""
 
-from PIL import Image, ImageDraw, ImageFont
-from datetime import timedelta
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from datetime import timedelta, datetime
 import os
+import logging
+import platform
 
+logger = logging.getLogger(__name__)
 
-def create_share_card(
-    first_name: str,
-    delta: timedelta,
-    savings: float,
-    cigarettes: int,
-    quit_date_str: str,
-    output_path: str = "data/share_card.png"
-) -> str:
-    """Создать карточку прогресса"""
+# Пути к шрифтам
+FONT_PATHS = {
+    "win": {
+        "regular": "C:/Windows/Fonts/segoeui.ttf",
+        "bold": "C:/Windows/Fonts/segoeuib.ttf",
+        "emoji": "C:/Windows/Fonts/seguiemj.ttf"
+    },
+    "linux": {
+        "regular": ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
+        "bold": ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"],
+        "emoji": ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"]
+    }
+}
 
-    # Параметры
-    WIDTH = 1080
-    PADDING = 60
-    LINE_HEIGHT = 80
+def get_font_path(type_key: str) -> str:
+    os_name = platform.system().lower()
+    if "windows" in os_name: return FONT_PATHS["win"][type_key]
+    paths = FONT_PATHS["linux"][type_key]
+    for p in paths:
+        if os.path.exists(p): return p
+    return paths[0]
 
-    # Определяем высоту
-    days = delta.days
-    hours = delta.seconds // 3600
+def get_font(type_key: str, size: int) -> ImageFont.FreeTypeFont:
+    try: return ImageFont.truetype(get_font_path(type_key), size)
+    except: return ImageFont.load_default()
 
-    # Цвета
-    BG_COLOR = "#1a1a2e"
-    ACCENT_COLOR = "#00d4ff"
-    TEXT_COLOR = "#ffffff"
-    SUB_COLOR = "#a0a0b0"
-    CARD_COLOR = "#16213e"
+def draw_mesh_background(width: int, height: int):
+    base = Image.new('RGBA', (width, height), (7, 10, 19, 255))
+    glow = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(glow)
+    def dg(cx, cy, r, c):
+        for i in range(r, 0, -5):
+            a = int(c[3] * (1 - (i/r)**1.5))
+            d.ellipse([cx-i, cy-i, cx+i, cy+i], fill=(c[0], c[1], c[2], a))
+    dg(width*0.8, height*0.1, 950, (14, 165, 233, 45))
+    dg(width*0.1, height*0.9, 850, (16, 185, 129, 38))
+    glow_filtered = glow.filter(ImageFilter.GaussianBlur(65))
+    base.alpha_composite(glow_filtered)
+    return base
 
-    # Создаём изображение
-    img = Image.new('RGB', (WIDTH, 1400), BG_COLOR)
-    draw = ImageDraw.Draw(img)
+def draw_glass_card(img: Image.Image, x, y, w, h, radius=40):
+    mask = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
+    region = img.crop((x, y, x+w, y+h)).filter(ImageFilter.GaussianBlur(40))
+    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 15))
+    img.paste(Image.alpha_composite(region, overlay), (x, y), mask)
+    b_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(b_layer).rounded_rectangle([x, y, x+w, y+h], radius=radius, outline=(255, 255, 255, 35), width=2)
+    img.alpha_composite(b_layer)
 
-    # Шрифты
-    try:
-        font_title = ImageFont.truetype("arial.ttf", 72)
-        font_subtitle = ImageFont.truetype("arial.ttf", 42)
-        font_value = ImageFont.truetype("arial.ttf", 96)
-        font_label = ImageFont.truetype("arial.ttf", 36)
-        font_date = ImageFont.truetype("arial.ttf", 32)
-    except:
-        # Fallback на дефолтные шрифты
-        font_title = ImageFont.load_default()
-        font_subtitle = ImageFont.load_default()
-        font_value = ImageFont.load_default()
-        font_label = ImageFont.load_default()
-        font_date = ImageFont.load_default()
+def create_ultra_minimal_logo(size=300):
+    badge = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(badge)
+    for i in range(15):
+        alpha = int(20 * (1 - i/15))
+        d.rounded_rectangle([15-i, 15-i, size-5+i, size-5+i], radius=70+i, fill=(0, 0, 0, alpha))
+    d.rounded_rectangle([10, 10, size-10, size-10], radius=65, fill=(255, 255, 255, 255))
+    LOGO_V3 = "data/logo_v3.png"
+    if os.path.exists(LOGO_V3):
+        try:
+            icon = Image.open(LOGO_V3).convert('RGBA')
+            pad = 50
+            icon_size = size - pad * 2
+            icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            badge.paste(icon, (pad, pad), icon)
+        except:
+            pass
+    return badge
 
-    # Заголовок
-    y = PADDING
-    draw.text((PADDING, y), "🚭 StopSmoke Bot", fill=ACCENT_COLOR, font=font_title)
+def create_share_card(first_name, delta, savings, cigarettes, quit_date_str, output_path="data/share_card.png"):
+    WIDTH, HEIGHT = 1080, 1920
+    PADDING = 80
+    img = draw_mesh_background(WIDTH, HEIGHT)
+    draw = ImageDraw.Draw(img, 'RGBA')
 
-    # Подзаголовок
-    y += 100
-    draw.text((PADDING, y), f"{first_name} бросает курить!", fill=TEXT_COLOR, font=font_subtitle)
+    f_h1 = get_font("bold", 76); f_days = get_font("bold", 240); f_label = get_font("regular", 44)
+    f_stat_v = get_font("bold", 68); f_stat_l = get_font("regular", 30)
+    f_emoji = get_font("emoji", 48)
 
-    # Основной блок — дни
-    y += 120
-    card_height = 300
-    draw.rounded_rectangle(
-        [PADDING, y, WIDTH - PADDING, y + card_height],
-        radius=30,
-        fill=CARD_COLOR
-    )
+    logo_size = 300
+    logo = create_ultra_minimal_logo(logo_size)
+    img.paste(logo, ((WIDTH - logo_size) // 2, 100), logo)
 
-    # Дни
-    days_text = f"{days}"
-    days_w = draw.textlength(days_text, font=font_value)
-    draw.text(((WIDTH - days_w) / 2, y + 40), days_text, fill=ACCENT_COLOR, font=font_value)
+    bbox = draw.textbbox((0, 0), first_name, font=f_h1)
+    draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 450), first_name, fill=(255, 255, 255, 255), font=f_h1)
+    sub = "на пути к здоровью"; bbox = draw.textbbox((0, 0), sub, font=f_label)
+    draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, 540), sub, fill=(148, 163, 184, 255), font=f_label)
 
-    days_label = "дней без сигарет"
-    days_l_w = draw.textlength(days_label, font=font_label)
-    draw.text(((WIDTH - days_l_w) / 2, y + 150), days_label, fill=SUB_COLOR, font=font_label)
+    days = delta.days; cy, ch = 650, 480
+    draw_glass_card(img, PADDING, cy, WIDTH - PADDING * 2, ch)
+    txt_d = str(days); bbox = draw.textbbox((0, 0), txt_d, font=f_days)
+    draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 30), txt_d, fill=(255, 255, 255, 255), font=f_days)
+    
+    if 11 <= days % 100 <= 14: dw = "ДНЕЙ"
+    elif days % 10 == 1: dw = "ДЕНЬ"
+    elif 2 <= days % 10 <= 4: dw = "ДНЯ"
+    else: dw = "ДНЕЙ"
+    lbl = f"{dw} БЕЗ СИГАРЕТ"; bbox = draw.textbbox((0, 0), lbl, font=get_font("bold", 52))
+    draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 300), lbl, fill=(56, 189, 248, 255), font=get_font("bold", 52))
+    h_txt = f"и {delta.seconds // 3600} часов свободы"; bbox = draw.textbbox((0, 0), h_txt, font=f_label)
+    draw.text(((WIDTH - (bbox[2]-bbox[0])) / 2, cy + 390), h_txt, fill=(148, 163, 184, 255), font=f_label)
 
-    hours_text = f"{hours} часов"
-    hours_w = draw.textlength(hours_text, font=font_label)
-    draw.text(((WIDTH - hours_w) / 2, y + 210), hours_text, fill=SUB_COLOR, font=font_label)
+    sy, sw, sh = 1180, (WIDTH - PADDING * 2 - 40) // 2, 260
+    st_data = [{"v": f"{savings:,.0f}₽", "l": "Сэкономлено", "i": "💰"}, {"v": f"{cigarettes:,}", "l": "Не выкурено", "i": "🚭"}, {"v": f"{int(cigarettes * 5 / 60)}ч", "l": "Жизни спасено", "i": "❤️"}, {"v": f"{quit_date_str}", "l": "Дата старта", "i": "📅"}]
+    for i, s in enumerate(st_data):
+        sx, scy = PADDING + (i%2)*(sw+40), sy + (i//2)*(sh+40)
+        draw_glass_card(img, sx, scy, sw, sh, radius=35)
+        v_b = draw.textbbox((0,0), s["v"], font=f_stat_v); draw.text((sx+(sw-(v_b[2]-v_b[0]))/2, scy+80), s["v"], fill=(255,255,255,255), font=f_stat_v)
+        l_b = draw.textbbox((0,0), s["l"], font=f_stat_l); draw.text((sx+(sw-(l_b[2]-l_b[0]))/2, scy+170), s["l"], fill=(148, 163, 184, 255), font=f_stat_l)
+        draw.text((sx+30, scy+25), s["i"], fill=(255,255,255,255), font=f_emoji)
 
-    # Дата отказа
-    y += card_height + 30
-    date_text = f"📅 Дата отказа: {quit_date_str}"
-    date_w = draw.textlength(date_text, font=font_date)
-    draw.text(((WIDTH - date_w) / 2, y), date_text, fill=SUB_COLOR, font=font_date)
-
-    # Статистика — 2 колонки
-    y += 80
-    col_width = (WIDTH - PADDING * 2 - 40) / 2
-
-    # Левая колонка — сэкономлено
-    draw.rounded_rectangle(
-        [PADDING, y, PADDING + col_width, y + 200],
-        radius=20,
-        fill=CARD_COLOR
-    )
-    money_text = f"{savings:,.0f}₽"
-    money_w = draw.textlength(money_text, font=font_value)
-    draw.text((PADDING + (col_width - money_w) / 2, y + 30), money_text, fill="#4ade80", font=font_value)
-    money_label = "сэкономлено"
-    money_l_w = draw.textlength(money_label, font=font_label)
-    draw.text((PADDING + (col_width - money_l_w) / 2, y + 130), money_label, fill=SUB_COLOR, font=font_label)
-
-    # Правая колонка — не выкурено
-    right_x = PADDING + col_width + 40
-    draw.rounded_rectangle(
-        [right_x, y, right_x + col_width, y + 200],
-        radius=20,
-        fill=CARD_COLOR
-    )
-    cig_text = f"{cigarettes:,}"
-    cig_w = draw.textlength(cig_text, font=font_value)
-    draw.text((right_x + (col_width - cig_w) / 2, y + 30), cig_text, fill="#f97316", font=font_value)
-    cig_label = "сигарет не выкурено"
-    cig_l_w = draw.textlength(cig_label, font=font_label)
-    draw.text((right_x + (col_width - cig_l_w) / 2, y + 130), cig_label, fill=SUB_COLOR, font=font_label)
-
-    # Прогресс-бар здоровья (условно до 1 года)
-    y += 260
-    progress_label = "Прогресс до 1 года:"
-    prog_l_w = draw.textlength(progress_label, font=font_label)
-    draw.text((PADDING, y), progress_label, fill=SUB_COLOR, font=font_label)
-
-    y += 50
-    bar_width = WIDTH - PADDING * 2
-    bar_height = 30
-    progress = min(100, (days / 365) * 100)
-    filled = int(bar_width * progress / 100)
-
-    draw.rounded_rectangle(
-        [PADDING, y, WIDTH - PADDING, y + bar_height],
-        radius=15,
-        fill="#2a2a4a"
-    )
-    if filled > 0:
-        draw.rounded_rectangle(
-            [PADDING, y, PADDING + filled, y + bar_height],
-            radius=15,
-            fill=ACCENT_COLOR
-        )
-
-    y += 50
-    percent_text = f"{progress:.1f}%"
-    percent_w = draw.textlength(percent_text, font=font_label)
-    draw.text(((WIDTH - percent_w) / 2, y), percent_text, fill=ACCENT_COLOR, font=font_label)
-
-    # Футер
-    y += 80
-    footer_text = "💪 Присоединяйся!"
-    footer_w = draw.textlength(footer_text, font=font_subtitle)
-    draw.text(((WIDTH - footer_w) / 2, y), footer_text, fill=ACCENT_COLOR, font=font_subtitle)
-
-    # Сохраняем
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    img.save(output_path, "PNG", quality=95)
-
-    return output_path
+    py = 1780; draw.text((PADDING, py), "Прогресс до 1 года", fill=(148, 163, 184, 255), font=f_stat_l)
+    draw.rounded_rectangle([PADDING, py+60, WIDTH-PADDING, py+88], radius=14, fill=(30, 41, 59, 255))
+    pct = min(100, (days / 365) * 100)
+    if pct > 0: draw.rounded_rectangle([PADDING, py+60, PADDING + int((WIDTH-PADDING*2)*pct/100), py+88], radius=14, fill=(14, 165, 233, 255))
+    
+    p = os.path.abspath(output_path); os.makedirs(os.path.dirname(p), exist_ok=True)
+    img.convert('RGB').save(p, "PNG", quality=95)
+    return p
