@@ -7,3 +7,8 @@ data/*.png
 # Но при этом сохраняем шрифты и логотип
 !data/fonts/
 !data/logo_v3.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

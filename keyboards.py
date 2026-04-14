@@ -24,7 +24,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="🌐 Сообщество"),
-                KeyboardButton(text="❓ Помощь")
+                KeyboardButton(text="❓ Помощь / ИИ поддержка")
             ]
         ],
         resize_keyboard=True
@@ -346,3 +346,22 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_ai_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для ИИ поддержки"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✉️ Написать ассистенту",
+                callback_data="ask_ai"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏠 Главное меню",
+                callback_data="back_to_main"
+            )
+        ]
+    ])
+    return keyboard

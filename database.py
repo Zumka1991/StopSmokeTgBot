@@ -34,14 +34,32 @@ async def init_db():
             await db.execute(
                 "ALTER TABLE users ADD COLUMN rating_visible INTEGER DEFAULT 1"
             )
+        except Exception: pass
+        try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN rating_last_confirmed TIMESTAMP"
             )
+        except Exception: pass
+        try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN last_active TIMESTAMP"
             )
-        except Exception:
-            pass  # Поля уже существуют
+        except Exception: pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN referred_by INTEGER"
+            )
+        except Exception: pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN ai_questions_today INTEGER DEFAULT 0"
+            )
+        except Exception: pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN last_ai_question_date TEXT"
+            )
+        except Exception: pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS achievements (
@@ -74,10 +92,21 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ai_chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                role TEXT,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        """)
+
         await db.commit()
 
 
-async def add_user(user_id: int, username: str, first_name: str) -> bool:
+async def add_user(user_id: int, username: str, first_name: str, referred_by: int = None) -> bool:
     """Добавление нового пользователя"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
@@ -87,9 +116,9 @@ async def add_user(user_id: int, username: str, first_name: str) -> bool:
             return False
 
         await db.execute(
-            """INSERT INTO users (user_id, username, first_name)
-               VALUES (?, ?, ?)""",
-            (user_id, username, first_name)
+            """INSERT INTO users (user_id, username, first_name, referred_by)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, username, first_name, referred_by)
         )
         await db.commit()
         return True
@@ -361,3 +390,86 @@ async def make_all_users_visible() -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+async def get_referral_count(user_id: int) -> int:
+    """Получение количества приглашенных друзей"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM users WHERE referred_by = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def check_ai_limit(user_id: int) -> tuple[bool, int]:
+    """Проверка дневного лимита вопросов ИИ (возвращает (можно_задать, осталось))"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT ai_questions_today, last_ai_question_date FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False, 0
+
+        today = datetime.now().date().isoformat()
+        last_date = row["last_ai_question_date"]
+        count = row["ai_questions_today"] or 0
+
+        if last_date != today:
+            # Новый день, сбрасываем счетчик
+            await db.execute(
+                "UPDATE users SET ai_questions_today = 0, last_ai_question_date = ? WHERE user_id = ?",
+                (today, user_id)
+            )
+            await db.commit()
+            return True, 3
+
+        return count < 3, max(0, 3 - count)
+
+
+async def increment_ai_usage(user_id: int):
+    """Увеличение счетчика использования ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET ai_questions_today = ai_questions_today + 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()
+
+
+async def add_ai_chat_message(user_id: int, role: str, content: str):
+    """Добавление сообщения в историю чата с ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, content)
+        )
+        await db.commit()
+
+
+async def get_ai_chat_history(user_id: int, limit: int = 10) -> list:
+    """Получение истории чата с ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT role, content FROM ai_chat_history
+               WHERE user_id = ?
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (user_id, limit)
+        )
+        rows = await cursor.fetchall()
+        return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+
+async def clear_ai_chat_history(user_id: int):
+    """Очистка истории чата с ИИ"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "DELETE FROM ai_chat_history WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -14,6 +14,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from openai import AsyncOpenAI
 
 import database as db
 from keyboards import (
@@ -30,7 +31,8 @@ from keyboards import (
     get_diary_menu_keyboard,
     get_diary_dates_keyboard,
     get_diary_delete_date_keyboard,
-    get_diary_confirm_delete_keyboard
+    get_diary_confirm_delete_keyboard,
+    get_ai_keyboard
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
 from share_card import create_share_card
@@ -47,6 +49,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-lite-001")
+
+client = None
+if OPENROUTER_API_KEY:
+    client = AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY,
+    )
+
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
@@ -59,6 +71,10 @@ scheduler = AsyncIOScheduler()
 
 class DiaryState(StatesGroup):
     waiting_for_text = State()
+
+
+class AIState(StatesGroup):
+    waiting_for_question = State()
 
 
 class ActivityTrackerMiddleware:
@@ -118,13 +134,23 @@ def get_progress_bar(percent: float, length: int = 10) -> str:
 # ============ КОМАНДЫ ============
 
 @dp.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, command: CommandObject):
     """Обработка команды /start"""
     user_id = message.from_user.id
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or "Друг"
 
-    is_new = await db.add_user(user_id, username, first_name)
+    # Проверка реферала
+    referred_by = None
+    if command.args and command.args.startswith("ref_"):
+        try:
+            referred_by = int(command.args.replace("ref_", ""))
+            if referred_by == user_id:  # Нельзя пригласить самого себя
+                referred_by = None
+        except ValueError:
+            pass
+
+    is_new = await db.add_user(user_id, username, first_name, referred_by)
     user = await db.get_user(user_id)
 
     if is_new or not user.get("quit_date"):
@@ -162,38 +188,27 @@ async def cmd_start(message: Message):
 
 
 @dp.message(Command("help"))
-@dp.message(F.text == "❓ Помощь")
+@dp.message(F.text == "❓ Помощь / ИИ поддержка")
 async def cmd_help(message: Message):
-    """Помощь"""
-    help_text = """
+    """Помощь и ИИ поддержка"""
+    help_text = f"""
 🚭 *StopSmoke Bot — Помощь*
 
 *Основные команды:*
-/start — Начать использование бота
+/start — Начать использование
 /progress — Показать прогресс
 /rating — Таблица лидеров
 /motivation — Получить мотивацию
 /settings — Настройки
-/help — Эта справка
 
-*Кнопки меню:*
-📊 *Мой прогресс* — статистика вашего пути
-🏆 *Рейтинг* — соревнование с другими
-💪 *Мотивация* — вдохновляющие цитаты
-🎯 *Достижения* — ваши награды
-⚙️ *Настройки* — персонализация
+━━━━━━━━━━━━━━━━━━━━
 
-*Как это работает:*
-1. Укажите дату отказа от курения
-2. Бот считает время без сигарет
-3. Каждый день приходит мотивация
-4. Зарабатывайте достижения
-5. Соревнуйтесь с другими!
+🤖 *ИИ Поддержка*
 
-💡 *Совет:* Если сорвались — не сдавайтесь!
-Просто начните заново в настройках.
+Наш ИИ-ассистент поможет вам справиться с тягой к курению и ответит на любые вопросы. 
+Доступ открывается после приглашения хотя бы одного друга!
 """
-    await message.answer(help_text)
+    await message.answer(help_text, reply_markup=get_ai_keyboard())
 
 
 @dp.message(Command("visibleall"))
@@ -849,15 +864,6 @@ async def callback_rating_navigation(callback: CallbackQuery):
     await show_rating_page(callback, page)
 
 
-@dp.callback_query(F.data == "back_to_main")
-async def callback_back_to_main(callback: CallbackQuery):
-    """Возврат в главное меню"""
-    await callback.message.edit_text(
-        "Используйте кнопки ниже для навигации.",
-        reply_markup=get_main_keyboard()
-    )
-    await callback.answer()
-
 
 # ============ ОБРАБОТКА ТЕКСТА (дата) ============
 
@@ -1239,6 +1245,137 @@ async def check_rating_confirmations():
 
         except Exception as e:
             logger.error(f"Ошибка проверки рейтинга для пользователя {user.get('user_id')}: {e}")
+
+
+# ============ ИИ ПОДДЕРЖКА ============
+
+@dp.callback_query(F.data == "ask_ai")
+async def callback_ask_ai(callback: CallbackQuery, state: FSMContext):
+    """Начало диалога с ИИ"""
+    user_id = callback.from_user.id
+    referral_count = await db.get_referral_count(user_id)
+
+    if referral_count < 1:
+        # Получаем инфо о боте для ссылки
+        bot_info = await bot.get_me()
+        user_id = callback.from_user.id
+        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        
+        await callback.message.edit_text(
+            "🔒 *Доступ ограничен*\n\n"
+            "ИИ-ассистент доступен только тем, кто пригласил хотя бы одного друга.\n\n"
+            f"🔗 *Ваша ссылка для приглашения:*\n`{ref_link}`\n\n"
+            "Пригласите друга и возвращайтесь за поддержкой! 💪",
+            reply_markup=get_ai_keyboard()
+        )
+        await callback.answer()
+        return
+
+    can_ask, left = await db.check_ai_limit(user_id)
+    if not can_ask:
+        await callback.answer("Вы исчерпали лимит (3 вопроса в день). Ждем вас завтра!", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "🤖 *Я слушаю!*\n\n"
+        "Задайте любой вопрос о том, как бросить курить, как справиться с тягой "
+        "или просто попросите поддержки.\n\n"
+        f"💡 _У вас осталось {left} вопроса на сегодня._",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_main")]
+        ])
+    )
+    await state.set_state(AIState.waiting_for_question)
+    await callback.answer()
+
+
+@dp.message(AIState.waiting_for_question)
+async def handle_ai_question(message: Message, state: FSMContext):
+    """Обработка вопроса к ИИ"""
+    if not client:
+        await message.answer("⚠️ ИИ-поддержка временно недоступна (не настроен API ключ).")
+        await state.clear()
+        return
+
+    user_id = message.from_user.id
+    can_ask, _ = await db.check_ai_limit(user_id)
+    
+    if not can_ask:
+        await message.answer("❌ Лимит вопросов на сегодня исчерпан.")
+        await state.clear()
+        return
+
+    system_prompt = """
+    Ты — человечный и эмпатичный ассистент поддержки в боте 'StopSmoke'. 
+    Твоя специализация — помощь людям в отказе от курения и борьбе с никотиновой зависимостью.
+
+    Твои правила:
+    1. Отвечай ТОЛЬКО на вопросы, связанные с курением, сигаретами, вейпами, никотином и процессом отказа от них. 
+    2. Если пользователь задает вопрос на другую тему, мягко и тепло объясни, что ты здесь только для поддержки в борьбе с курением.
+    3. Тон общения: очень теплый, мягкий, поддерживающий и человечный. Избегай сухого академического стиля.
+    4. Краткость: не пиши слишком длинные ответы. Будь лаконичен, но содержателен.
+    5. Общайся на русском языке.
+    """
+
+    waiting_msg = await message.answer("🤖 *Думаю...*")
+
+    try:
+        # Получаем историю переписки (последние 20 сообщений)
+        history = await db.get_ai_chat_history(user_id, limit=20)
+        
+        # Формируем список сообщений для API
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for msg in history:
+            api_messages.append({"role": msg["role"], "content": msg["content"]})
+        
+        # Добавляем текущее сообщение пользователя
+        api_messages.append({"role": "user", "content": message.text})
+        
+        # Сохраняем сообщение пользователя в БД сразу
+        await db.add_ai_chat_message(user_id, "user", message.text)
+
+        response = await client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=api_messages,
+            max_tokens=600
+        )
+        
+        ai_text = response.choices[0].message.content
+        
+        # Сохраняем ответ ассистента в БД
+        await db.add_ai_chat_message(user_id, "assistant", ai_text)
+        await db.increment_ai_usage(user_id)
+        
+        # Обработка ответа
+        if len(ai_text) > 4000:
+            await waiting_msg.delete()
+            for i in range(0, len(ai_text), 4000):
+                await message.answer(ai_text[i:i+4000])
+        else:
+            # Используем HTML для избежания ошибок парсинга Markdown от ИИ
+            await waiting_msg.edit_text(ai_text, parse_mode="HTML")
+            
+    except Exception as e:
+        logger.error(f"Ошибка ИИ-помощника: {e}")
+        try:
+            await waiting_msg.edit_text("😔 К сожалению, я временно не могу ответить. Попробуйте еще раз позже.")
+        except:
+            await message.answer("😔 Произошла ошибка. Попробуйте позже.")
+
+    await state.clear()
+    await message.answer("Желаете задать еще один вопрос?", reply_markup=get_ai_keyboard())
+
+
+@dp.callback_query(F.data == "back_to_main")
+async def callback_back_to_main(callback: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню"""
+    await state.clear()
+    await callback.message.delete()
+    await callback.message.answer(
+        "С возвращением! Выбирайте раздел:",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
 
 
 # ============ ЗАПУСК ============
