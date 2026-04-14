@@ -60,6 +60,11 @@ async def init_db():
                 "ALTER TABLE users ADD COLUMN last_ai_question_date TEXT"
             )
         except Exception: pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN ai_unlocked INTEGER DEFAULT 0"
+            )
+        except Exception: pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS achievements (
@@ -573,6 +578,45 @@ async def set_broadcast_sent(key: str):
             (key, "sent")
         )
         await db.commit()
+
+
+async def has_user_ai_access(user_id: int) -> bool:
+    """Проверка доступа к ИИ (по приглашению или вручную)"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT ai_unlocked, referred_by FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        # Доступ если ai_unlocked=1 ИЛИ есть рефералы
+        return row[0] == 1 or (row[1] is not None)
+
+
+async def unlock_user_ai(user_id: int) -> bool:
+    """Открыть доступ к ИИ вручную (для админа)"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET ai_unlocked = 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.commit()
+        return True
+
+
+async def get_user_by_username(username: str) -> Optional[dict]:
+    """Получение пользователя по username"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        username_clean = username.lstrip("@")
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE username = ? OR username = ?",
+            (username_clean, f"@{username_clean}")
+        )
+        row = await cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
 
 
 async def get_all_user_ids() -> list[int]:

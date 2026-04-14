@@ -470,6 +470,57 @@ async def send_broadcast_mail(admin_id: int, text: str):
     logger.info(f"Рассылка завершена. Отправлено: {sent}, ошибок: {errors}")
 
 
+@dp.message(Command("setai"))
+async def cmd_setai(message: Message, command: CommandObject):
+    """Открыть доступ к ИИ пользователю по username (только для админов)"""
+    username = message.from_user.username or ""
+    
+    if not is_admin(username):
+        await message.answer("⛔ У вас нет прав на эту команду.")
+        return
+    
+    target_username = command.args
+    if not target_username:
+        await message.answer(
+            "❌ Использование: /setai <telegram_username>\n\n"
+            "Пример: /setai @username\n"
+            "или: /setai username"
+        )
+        return
+    
+    # Убираем @ если есть
+    target_username = target_username.lstrip("@")
+    
+    # Ищем пользователя по username
+    user = await db.get_user_by_username(target_username)
+    
+    if not user:
+        await message.answer(f"❌ Пользователь @{target_username} не найден в базе.\n\n"
+                           "Пользователь должен хотя бы раз запустить бота (/start).")
+        return
+    
+    # Открываем доступ к ИИ
+    await db.unlock_user_ai(user["user_id"])
+    
+    await message.answer(
+        f"✅ *Доступ к ИИ открыт!*\n\n"
+        f"👤 Пользователь: @{target_username}\n"
+        f"🆔 ID: `{user['user_id']}`\n\n"
+        f"Теперь он может пользоваться ИИ-ассистентом без приглашения друга."
+    )
+    
+    # Опционально: уведомляем самого пользователя
+    try:
+        await bot.send_message(
+            user["user_id"],
+            "🎉 *Вам открыт доступ к ИИ-ассистенту!*\n\n"
+            "Администратор предоставил вам возможность общаться с умным ботом-помощником.\n\n"
+            "Используйте кнопку «✉️ Написать ассистенту» в разделе помощи! 💪"
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {user['user_id']}: {e}")
+
+
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     """Показать статистику бота"""
@@ -1444,9 +1495,9 @@ async def check_rating_confirmations():
 async def callback_ask_ai(callback: CallbackQuery, state: FSMContext):
     """Начало диалога с ИИ"""
     user_id = callback.from_user.id
-    referral_count = await db.get_referral_count(user_id)
+    has_access = await db.has_user_ai_access(user_id)
 
-    if referral_count < 1:
+    if not has_access:
         # Получаем инфо о боте для ссылки
         bot_info = await bot.get_me()
         user_id = callback.from_user.id
