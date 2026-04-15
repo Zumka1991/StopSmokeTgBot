@@ -301,13 +301,21 @@ def get_tracking_subs_keyboard(subs: list) -> InlineKeyboardMarkup:
 
 
 def get_friend_progress_keyboard(target_id: int) -> InlineKeyboardMarkup:
-    """Под карточкой прогресса друга — обновить, отписаться, назад."""
+    """Под карточкой прогресса друга — написать, обновить, отписаться, назад."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Написать", callback_data=f"track_msg_{target_id}")],
         [
             InlineKeyboardButton(text="🔄 Обновить", callback_data=f"track_view_{target_id}"),
             InlineKeyboardButton(text="✖ Отписаться", callback_data=f"track_unsub_{target_id}"),
         ],
         [InlineKeyboardButton(text="◀️ К списку", callback_data="track_my_subs")]
+    ])
+
+
+def get_inbox_message_keyboard(sender_id: int) -> InlineKeyboardMarkup:
+    """Под входящим сообщением — кнопка ответить."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Ответить", callback_data=f"track_msg_{sender_id}")]
     ])
 
 

@@ -14,3 +14,4 @@ class AIState(StatesGroup):
 
 class TrackingState(StatesGroup):
     waiting_for_username = State()
+    waiting_for_message = State()

@@ -824,6 +824,22 @@ async def get_confirmed_watcher_ids(target_id: int) -> list[int]:
         return [r[0] for r in await cursor.fetchall()]
 
 
+async def has_active_subscription_pair(user_a: int, user_b: int) -> bool:
+    """True если между user_a и user_b есть подтверждённая подписка
+    в любую сторону. Используется как разрешение писать друг другу.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """SELECT 1 FROM progress_subscriptions
+               WHERE status = 'confirmed'
+                 AND ((watcher_id = ? AND target_id = ?)
+                   OR (watcher_id = ? AND target_id = ?))
+               LIMIT 1""",
+            (user_a, user_b, user_b, user_a)
+        )
+        return await cursor.fetchone() is not None
+
+
 async def is_tracking_blocked(user_id: int) -> bool:
     """Запретил ли пользователь отслеживание себя."""
     async with aiosqlite.connect(DATABASE_PATH) as db:

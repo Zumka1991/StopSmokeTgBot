@@ -11,7 +11,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import dp, bot, client, OPENROUTER_MODEL
-from keyboards import get_main_keyboard, get_ai_keyboard, get_tracking_request_keyboard
+from keyboards import (
+    get_main_keyboard,
+    get_ai_keyboard,
+    get_tracking_request_keyboard,
+    get_inbox_message_keyboard,
+)
 import database as db
 from states import DiaryState, AIState, TrackingState
 from utils import format_duration, calculate_savings, calculate_cigarettes_not_smoked, escape_markdown
@@ -377,3 +382,82 @@ async def handle_tracking_username(message: Message, state: FSMContext):
             "Заявка отменена.",
             reply_markup=get_main_keyboard()
         )
+
+
+# ===== ОТСЛЕЖИВАНИЕ: ЛИЧНЫЕ СООБЩЕНИЯ ЧЕРЕЗ БОТА =====
+
+MESSAGE_MAX_LEN = 1000
+
+
+@dp.message(TrackingState.waiting_for_message)
+async def handle_tracking_message(message: Message, state: FSMContext):
+    """Доставка сообщения отслеживаемому пользователю (или ответа)."""
+    data = await state.get_data()
+    recipient_id = data.get("recipient_id")
+    await state.clear()
+
+    if not recipient_id:
+        await message.answer(
+            "❌ Получатель не определён. Попробуй заново через карточку друга.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        await message.answer(
+            "Отменено. Сообщение не отправлено.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    if len(text) > MESSAGE_MAX_LEN:
+        await message.answer(
+            f"❌ Слишком длинно ({len(text)} символов). Максимум {MESSAGE_MAX_LEN} — "
+            "сократи и попробуй ещё раз через карточку друга.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    sender_id = message.from_user.id
+
+    # Повторно проверяем разрешение — на случай если за время ввода
+    # подписка была снята или цель включила блок.
+    if not await db.has_active_subscription_pair(sender_id, recipient_id):
+        await message.answer(
+            "❌ Подписки между вами больше нет — сообщение не отправлено.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    sender_user = message.from_user
+    sender_name = sender_user.first_name or sender_user.username or "Пользователь"
+    sender_handle = f"@{sender_user.username}" if sender_user.username else ""
+    handle_part = f" ({escape_markdown(sender_handle)})" if sender_handle else ""
+
+    delivery_text = (
+        f"💬 *Сообщение от {escape_markdown(sender_name)}*{handle_part}\n\n"
+        f"{escape_markdown(text)}"
+    )
+
+    try:
+        await bot.send_message(
+            recipient_id,
+            delivery_text,
+            reply_markup=get_inbox_message_keyboard(sender_id)
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось доставить сообщение {sender_id}->{recipient_id}: {e}")
+        await message.answer(
+            "❌ Не удалось доставить — возможно, получатель заблокировал бота.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    recipient = await db.get_user(recipient_id)
+    rec_name = (recipient or {}).get("first_name") or (recipient or {}).get("username") or "получателю"
+    await message.answer(
+        f"✅ Сообщение доставлено *{escape_markdown(rec_name)}*. "
+        "Когда ответит — придёт уведомление.",
+        reply_markup=get_main_keyboard()
+    )

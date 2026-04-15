@@ -27,6 +27,7 @@ from keyboards import (
     get_tracking_subs_keyboard,
     get_tracking_watchers_keyboard,
     get_friend_progress_keyboard,
+    get_inbox_message_keyboard,
 )
 from quotes import get_random_quote
 from share_card import create_share_card
@@ -409,9 +410,10 @@ async def _notify_watchers_about_relapse(target_user) -> None:
         "пару тёплых слов поддержки. В такие моменты это особенно важно."
     )
 
+    kb = get_inbox_message_keyboard(target_id)
     for wid in watcher_ids:
         try:
-            await bot.send_message(wid, text)
+            await bot.send_message(wid, text, reply_markup=kb)
         except Exception as e:
             logger.warning(f"Не доставлено уведомление о срыве watcher={wid} target={target_id}: {e}")
 
@@ -1065,12 +1067,13 @@ async def callback_track_accept(callback: CallbackQuery):
         pass
     await callback.answer("Принято!")
 
-    # Уведомим наблюдателя.
+    # Уведомим наблюдателя — с кнопкой написать в благодарность.
     try:
         await bot.send_message(
             watcher_id,
             f"✅ *{escape_markdown(target_display)}* принял твой запрос на отслеживание. "
-            "Теперь ты будешь получать уведомление, если он сорвётся."
+            "Теперь ты будешь видеть его прогресс и получишь уведомление, если он сорвётся.",
+            reply_markup=get_inbox_message_keyboard(target_id)
         )
     except Exception as e:
         logger.warning(f"Не доставлено подтверждение watcher={watcher_id}: {e}")
@@ -1130,6 +1133,45 @@ async def callback_track_unsub(callback: CallbackQuery):
         await callback.answer("Подписка уже не существует", show_alert=True)
     # Перерисуем список.
     await callback_track_my_subs(callback)
+
+
+@dp.callback_query(F.data.startswith("track_msg_"))
+async def callback_track_msg(callback: CallbackQuery, state: FSMContext):
+    """Запрос на отправку сообщения отслеживаемому юзеру (или ответ).
+
+    Доступно если между текущим юзером и target есть подтверждённая
+    подписка в любую сторону (watcher↔target).
+    """
+    try:
+        recipient_id = int(callback.data.removeprefix("track_msg_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    sender_id = callback.from_user.id
+    if recipient_id == sender_id:
+        await callback.answer("Нельзя писать самому себе", show_alert=True)
+        return
+
+    if not await db.has_active_subscription_pair(sender_id, recipient_id):
+        await callback.answer(
+            "Нет активной подписки между вами — писать нельзя.",
+            show_alert=True
+        )
+        return
+
+    recipient = await db.get_user(recipient_id)
+    name = (recipient or {}).get("first_name") or (recipient or {}).get("username") or "пользователю"
+
+    await state.set_state(TrackingState.waiting_for_message)
+    await state.update_data(recipient_id=recipient_id)
+
+    await callback.message.answer(
+        f"💬 *Сообщение для {escape_markdown(name)}*\n\n"
+        "Напиши текст одним сообщением — я доставлю.\n"
+        "Лимит: 1000 символов. Отмена — /cancel или любая команда.",
+    )
+    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("track_kick_"))
