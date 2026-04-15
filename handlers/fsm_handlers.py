@@ -10,7 +10,6 @@ from aiogram.types import Message
 
 from config import dp, bot, client, OPENROUTER_MODEL
 from keyboards import get_main_keyboard, get_ai_keyboard
-from utils import escape_markdown_v2
 import database as db
 from states import DiaryState, AIState
 
@@ -113,7 +112,7 @@ async def handle_ai_question(message: Message, state: FSMContext):
         return
 
     system_prompt = """
-    Тебя зовут Маруся. Ты — человечный и эмпатичный ассистент поддержки в Telegram боте 'StopSmoke'. Твой создатель - Мышонок.
+    Тебя зовут Лена. У тебя женский пол. Ты — человечный и эмпатичный ассистент поддержки в Telegram боте 'StopSmoke'. Твой создатель - Мышонок.
     Твоя специализация — помощь людям в отказе от курения и борьбе с никотиновой зависимостью.
 
     Твои правила:
@@ -123,7 +122,8 @@ async def handle_ai_question(message: Message, state: FSMContext):
     4. Пиши информативно, чтобы человек понял суть. Если вопрос требует развернутого ответа, отвечай развернуто.
     5. Общайся на русском языке.
     6. Постарайся мотивировать пользователей на то, чтобы не сорваться.
-    7. Используй Markdown-форматирование для структурирования ответов: **жирный**, *курсив*, `код`, - списки, и т.д.
+    7. Используй Markdown-форматирование для структурирования ответов: *жирный*, _курсив_, `код`, - списки, и т.д.
+    8. Представляйся при первом сообщении.
     """
 
     waiting_msg = await message.answer("🤖 *Думаю...*")
@@ -155,16 +155,13 @@ async def handle_ai_question(message: Message, state: FSMContext):
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
         await db.increment_ai_usage(user_id)
 
-        # Экранируем спецсимволы Markdown v2 в ответе ИИ
-        escaped_text = escape_markdown_v2(ai_text)
-
-        # Отправляем с поддержкой Markdown v2
-        if len(escaped_text) > 4000:
+        # Отправляем с поддержкой Markdown
+        if len(ai_text) > 4000:
             await waiting_msg.delete()
-            for i in range(0, len(escaped_text), 4000):
-                await message.answer(escaped_text[i:i+4000], parse_mode="MarkdownV2")
+            for i in range(0, len(ai_text), 4000):
+                await message.answer(ai_text[i:i+4000], parse_mode="Markdown")
         else:
-            await waiting_msg.edit_text(escaped_text, parse_mode="MarkdownV2")
+            await waiting_msg.edit_text(ai_text, parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Ошибка ИИ-помощника: {e}")

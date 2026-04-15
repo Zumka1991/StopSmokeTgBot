@@ -46,13 +46,6 @@ def escape_markdown(text: str) -> str:
     return text
 
 
-def escape_markdown_v2(text: str) -> str:
-    """Экранирование спецсимволов Markdown v2 для ответов ИИ"""
-    for char in ('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'):
-        text = text.replace(char, f'\\{char}')
-    return text
-
-
 def get_progress_bar(percent: float, length: int = 10) -> str:
     """Создание прогресс-бара"""
     filled = int(percent / 100 * length)
