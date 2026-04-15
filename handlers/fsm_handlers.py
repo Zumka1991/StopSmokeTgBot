@@ -122,7 +122,7 @@ async def handle_ai_question(message: Message, state: FSMContext):
     4. Пиши информативно, чтобы человек понял суть. Если вопрос требует развернутого ответа, отвечай развернуто.
     5. Общайся на русском языке.
     6. Постарайся мотивировать пользователей на то, чтобы не сорваться.
-    7. Используй Markdown-форматирование для структурирования ответов: *жирный*, _курсив_, `код`, - списки, и т.д.
+    7. Используй HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>, <code>код</code>. НЕ ИСПОЛЬЗУЙ Markdown (никаких ** или _).
     8. Представляйся при первом сообщении.
     """
 
@@ -155,13 +155,13 @@ async def handle_ai_question(message: Message, state: FSMContext):
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
         await db.increment_ai_usage(user_id)
 
-        # Отправляем с поддержкой Markdown
+        # Отправляем с поддержкой HTML
         if len(ai_text) > 4000:
             await waiting_msg.delete()
             for i in range(0, len(ai_text), 4000):
-                await message.answer(ai_text[i:i+4000], parse_mode="Markdown")
+                await message.answer(ai_text[i:i+4000], parse_mode="HTML")
         else:
-            await waiting_msg.edit_text(ai_text, parse_mode="Markdown")
+            await waiting_msg.edit_text(ai_text, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"Ошибка ИИ-помощника: {e}")

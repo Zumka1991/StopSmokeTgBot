@@ -116,6 +116,17 @@ async def cmd_help(message: Message):
     await message.answer(help_text, reply_markup=get_ai_keyboard())
 
 
+@dp.message(F.text == "📓 Дневник")
+async def cmd_diary(message: Message):
+    """Меню дневника"""
+    from keyboards import get_diary_menu_keyboard
+    await message.answer(
+        "📓 *Дневник*\n\n"
+        "Что хотите сделать?",
+        reply_markup=get_diary_menu_keyboard()
+    )
+
+
 @dp.message(Command("visibleall"))
 async def cmd_visibleall(message: Message):
     """Сделать всех пользователей видимыми в рейтинге"""
