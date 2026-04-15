@@ -124,7 +124,7 @@ async def handle_ai_question(message: Message, state: FSMContext):
     4. Пиши информативно, чтобы человек понял суть. Если вопрос требует развернутого ответа, отвечай развернуто.
     5. Общайся на русском языке.
     6. Постарайся мотивировать пользователей на то, чтобы не сорваться.
-    7. Используй HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>, <code>код</code>. НЕ ИСПОЛЬЗУЙ Markdown (никаких ** или _).
+    7. Используй HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>. НЕ ИСПОЛЬЗУЙ Markdown (никаких ** или _).
     8. Представляйся при первом сообщении.
     """
 
@@ -160,6 +160,9 @@ async def handle_ai_question(message: Message, state: FSMContext):
         ai_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", ai_text)
         # Также преобразуем _курсив_
         ai_text = re.sub(r"_(.*?)_", r"<i>\1</i>", ai_text)
+        # Преобразуем `код` и <code>код</code> в <b>жирный</b> по просьбе пользователя
+        ai_text = re.sub(r"`(.*?)`", r"<b>\1</b>", ai_text)
+        ai_text = re.sub(r"&lt;code&gt;(.*?)&lt;/code&gt;", r"<b>\1</b>", ai_text)
 
         # Сохраняем ответ ассистента в БД
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
