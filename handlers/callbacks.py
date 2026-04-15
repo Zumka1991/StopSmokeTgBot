@@ -22,12 +22,15 @@ from keyboards import (
     get_diary_dates_keyboard,
     get_diary_delete_date_keyboard,
     get_diary_confirm_delete_keyboard,
-    get_ai_keyboard
+    get_ai_keyboard,
+    get_tracking_menu_keyboard,
+    get_tracking_subs_keyboard,
+    get_tracking_watchers_keyboard,
 )
 from quotes import get_random_quote
 from share_card import create_share_card
 import database as db
-from states import DiaryState, AIState
+from states import DiaryState, AIState, TrackingState
 
 from handlers.commands import show_rating_page
 
@@ -373,6 +376,43 @@ async def callback_confirm_reset(callback: CallbackQuery):
         reply_markup=get_main_keyboard()
     )
     await callback.answer()
+
+    # Уведомляем подтверждённых подписчиков о срыве.
+    await _notify_watchers_about_relapse(callback.from_user)
+
+
+async def _notify_watchers_about_relapse(target_user) -> None:
+    """Шлёт всем confirmed-наблюдателям уведомление о срыве target_user.
+
+    target_user — aiogram.User: ожидаются поля id, first_name, username.
+    Тихо логирует ошибки, не падает целиком если один получатель недоступен.
+    """
+    target_id = target_user.id
+    try:
+        watcher_ids = await db.get_confirmed_watcher_ids(target_id)
+    except Exception as e:
+        logger.error(f"Не удалось получить watchers для {target_id}: {e}")
+        return
+
+    if not watcher_ids:
+        return
+
+    name = target_user.first_name or target_user.username or "Твой подопечный"
+    handle = f"@{target_user.username}" if target_user.username else ""
+    title_user = escape_markdown(name) + (f" ({escape_markdown(handle)})" if handle else "")
+
+    text = (
+        "💔 *Срыв у того, за кем ты следишь*\n\n"
+        f"{title_user} только что отметил срыв и начал отсчёт заново.\n\n"
+        "Это не провал — это часть пути. Если можешь, напиши ему сейчас "
+        "пару тёплых слов поддержки. В такие моменты это особенно важно."
+    )
+
+    for wid in watcher_ids:
+        try:
+            await bot.send_message(wid, text)
+        except Exception as e:
+            logger.warning(f"Не доставлено уведомление о срыве watcher={wid} target={target_id}: {e}")
 
 
 @dp.callback_query(F.data == "cancel_reset")
@@ -740,3 +780,230 @@ async def callback_show_ref_link(callback: CallbackQuery):
         "Отправьте её другу, и как только он запустит бота, вам откроется доступ к ИИ-ассистенту! 💪"
     )
     await callback.answer()
+
+
+# ============ ОТСЛЕЖИВАНИЕ ПРОГРЕССА ============
+
+@dp.callback_query(F.data == "track_menu")
+async def callback_track_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню отслеживания: добавить, мои подписки, мои наблюдатели."""
+    await state.clear()
+    user_id = callback.from_user.id
+    subs = await db.get_my_subscriptions(user_id)
+    watchers = await db.get_my_watchers(user_id)
+    confirmed_subs = sum(1 for s in subs if s["status"] == "confirmed")
+    pending_subs = sum(1 for s in subs if s["status"] == "pending")
+    confirmed_watchers = sum(1 for w in watchers if w["status"] == "confirmed")
+
+    text = (
+        "👁 *Отслеживание прогресса*\n\n"
+        "Это про взаимную поддержку: ты можешь следить за прогрессом другого "
+        "человека, и тебе придёт уведомление, если он сорвётся — чтобы ты "
+        "вовремя его поддержал.\n\n"
+        f"📋 Ты следишь: *{confirmed_subs}* (ожидают ответа: {pending_subs})\n"
+        f"👀 За тобой следят: *{confirmed_watchers}*\n\n"
+        "Что хочешь сделать?"
+    )
+    kb = get_tracking_menu_keyboard(has_subs=bool(subs), has_watchers=bool(watchers))
+    await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "track_add")
+async def callback_track_add(callback: CallbackQuery, state: FSMContext):
+    """Запросить ввод @username."""
+    await state.set_state(TrackingState.waiting_for_username)
+    await callback.message.answer(
+        "✍️ Отправь *@username* того, за кем хочешь следить.\n\n"
+        "Можно с собакой или без, можно ссылку `t.me/...`.\n"
+        "Чтобы отменить — отправь `/cancel` или любую команду.",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "track_my_subs")
+async def callback_track_my_subs(callback: CallbackQuery):
+    """Список 'За кем я слежу'."""
+    subs = await db.get_my_subscriptions(callback.from_user.id)
+    if not subs:
+        await callback.message.answer(
+            "📋 Ты пока ни за кем не следишь.",
+            reply_markup=get_tracking_menu_keyboard(False, False)
+        )
+        await callback.answer()
+        return
+
+    lines = ["📋 *За кем ты следишь:*\n"]
+    for s in subs:
+        name = s.get("first_name") or s.get("username") or f"id{s['target_id']}"
+        status_label = {
+            "confirmed": "✅ подтверждено",
+            "pending": "⏳ ждём ответа",
+            "declined": "🚫 отклонено"
+        }.get(s["status"], s["status"])
+        suffix = ""
+        if s["status"] == "confirmed" and s.get("quit_date"):
+            try:
+                qd = datetime.fromisoformat(s["quit_date"])
+                d = datetime.now() - qd
+                if d.total_seconds() > 0:
+                    suffix = f" — без сигарет {format_duration(d)}"
+            except Exception:
+                pass
+        lines.append(f"• *{escape_markdown(name)}* — {status_label}{escape_markdown(suffix)}")
+
+    await callback.message.answer(
+        "\n".join(lines),
+        reply_markup=get_tracking_subs_keyboard(subs)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "track_my_watchers")
+async def callback_track_my_watchers(callback: CallbackQuery):
+    """Список 'Кто следит за мной'."""
+    watchers = await db.get_my_watchers(callback.from_user.id)
+    if not watchers:
+        await callback.message.answer(
+            "👀 За тобой пока никто не следит.",
+            reply_markup=get_tracking_menu_keyboard(False, False)
+        )
+        await callback.answer()
+        return
+
+    lines = ["👀 *Кто следит за тобой:*\n"]
+    for w in watchers:
+        name = w.get("first_name") or w.get("username") or f"id{w['watcher_id']}"
+        status_label = {
+            "confirmed": "✅ подтверждено",
+            "pending": "⏳ ждёт твоего ответа",
+            "declined": "🚫 ты отклонил"
+        }.get(w["status"], w["status"])
+        lines.append(f"• *{escape_markdown(name)}* — {status_label}")
+
+    await callback.message.answer(
+        "\n".join(lines),
+        reply_markup=get_tracking_watchers_keyboard(watchers)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("track_accept_"))
+async def callback_track_accept(callback: CallbackQuery):
+    """Цель принимает заявку наблюдателя."""
+    try:
+        watcher_id = int(callback.data.removeprefix("track_accept_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    target_id = callback.from_user.id
+    ok = await db.respond_to_subscription(watcher_id, target_id, accept=True)
+    if not ok:
+        await callback.answer("Заявка уже неактуальна", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    target_display = callback.from_user.first_name or callback.from_user.username or "Пользователь"
+    try:
+        await callback.message.edit_text(
+            "✅ Ты принял запрос на отслеживание. Этот человек будет получать "
+            "уведомление, если ты отметишь срыв — он рядом, чтобы поддержать."
+        )
+    except Exception:
+        pass
+    await callback.answer("Принято!")
+
+    # Уведомим наблюдателя.
+    try:
+        await bot.send_message(
+            watcher_id,
+            f"✅ *{escape_markdown(target_display)}* принял твой запрос на отслеживание. "
+            "Теперь ты будешь получать уведомление, если он сорвётся."
+        )
+    except Exception as e:
+        logger.warning(f"Не доставлено подтверждение watcher={watcher_id}: {e}")
+
+
+@dp.callback_query(F.data.startswith("track_decline_"))
+async def callback_track_decline(callback: CallbackQuery):
+    """Цель отклоняет заявку."""
+    try:
+        watcher_id = int(callback.data.removeprefix("track_decline_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    target_id = callback.from_user.id
+    ok = await db.respond_to_subscription(watcher_id, target_id, accept=False)
+    target_display = callback.from_user.first_name or callback.from_user.username or "Пользователь"
+
+    try:
+        await callback.message.edit_text("❌ Запрос отклонён.")
+    except Exception:
+        pass
+    await callback.answer()
+
+    if ok:
+        try:
+            await bot.send_message(
+                watcher_id,
+                f"❌ *{escape_markdown(target_display)}* отклонил твой запрос на отслеживание."
+            )
+        except Exception as e:
+            logger.warning(f"Не доставлено уведомление об отказе watcher={watcher_id}: {e}")
+
+
+@dp.callback_query(F.data.startswith("track_unsub_"))
+async def callback_track_unsub(callback: CallbackQuery):
+    """Я отписываюсь от человека, за которым следил."""
+    try:
+        target_id = int(callback.data.removeprefix("track_unsub_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    watcher_id = callback.from_user.id
+    removed = await db.remove_subscription(watcher_id, target_id)
+    if removed:
+        await callback.answer("Отписался")
+        try:
+            # Тихо уведомим бывшую цель — без алармизма.
+            await bot.send_message(
+                target_id,
+                "ℹ️ Один из наблюдателей перестал следить за твоим прогрессом."
+            )
+        except Exception:
+            pass
+    else:
+        await callback.answer("Подписка уже не существует", show_alert=True)
+    # Перерисуем список.
+    await callback_track_my_subs(callback)
+
+
+@dp.callback_query(F.data.startswith("track_kick_"))
+async def callback_track_kick(callback: CallbackQuery):
+    """Я удаляю наблюдателя, который следил за мной."""
+    try:
+        watcher_id = int(callback.data.removeprefix("track_kick_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    target_id = callback.from_user.id
+    removed = await db.remove_subscription(watcher_id, target_id)
+    if removed:
+        await callback.answer("Удалён")
+        try:
+            await bot.send_message(
+                watcher_id,
+                "ℹ️ Пользователь, за которым ты следил, отозвал доступ к своему прогрессу."
+            )
+        except Exception:
+            pass
+    else:
+        await callback.answer("Запись уже не существует", show_alert=True)
+    await callback_track_my_watchers(callback)

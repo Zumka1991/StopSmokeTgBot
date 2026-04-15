@@ -115,6 +115,22 @@ async def init_db():
             )
         """)
 
+        # Подписки на отслеживание прогресса другого пользователя.
+        # status: pending (запрос отправлен), confirmed (подтверждён), declined (отклонён).
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS progress_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watcher_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP,
+                FOREIGN KEY (watcher_id) REFERENCES users (user_id),
+                FOREIGN KEY (target_id) REFERENCES users (user_id),
+                UNIQUE(watcher_id, target_id)
+            )
+        """)
+
         await db.commit()
 
 
@@ -680,3 +696,115 @@ async def toggle_free_ai_mode() -> bool:
         )
         await db.commit()
         return not current
+
+
+# ===== ПОДПИСКИ НА ПРОГРЕСС =====
+
+async def create_subscription_request(watcher_id: int, target_id: int) -> str:
+    """Создаёт/обновляет заявку на отслеживание.
+
+    Возвращает: 'created' — новая заявка, 'already_pending' — уже ждёт ответа,
+    'already_confirmed' — уже подтверждено, 'resent' — была declined, шлём заново.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT status FROM progress_subscriptions WHERE watcher_id = ? AND target_id = ?",
+            (watcher_id, target_id)
+        )
+        row = await cursor.fetchone()
+        if row:
+            status = row[0]
+            if status == 'pending':
+                return 'already_pending'
+            if status == 'confirmed':
+                return 'already_confirmed'
+            # declined — обновим в pending и попробуем заново
+            await db.execute(
+                """UPDATE progress_subscriptions
+                   SET status = 'pending', created_at = CURRENT_TIMESTAMP, responded_at = NULL
+                   WHERE watcher_id = ? AND target_id = ?""",
+                (watcher_id, target_id)
+            )
+            await db.commit()
+            return 'resent'
+        await db.execute(
+            "INSERT INTO progress_subscriptions (watcher_id, target_id, status) VALUES (?, ?, 'pending')",
+            (watcher_id, target_id)
+        )
+        await db.commit()
+        return 'created'
+
+
+async def respond_to_subscription(watcher_id: int, target_id: int, accept: bool) -> bool:
+    """Целевой пользователь отвечает на заявку. True — нашли pending и обновили."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id FROM progress_subscriptions WHERE watcher_id = ? AND target_id = ? AND status = 'pending'",
+            (watcher_id, target_id)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        new_status = 'confirmed' if accept else 'declined'
+        await db.execute(
+            "UPDATE progress_subscriptions SET status = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_status, row[0])
+        )
+        await db.commit()
+        return True
+
+
+async def remove_subscription(watcher_id: int, target_id: int) -> bool:
+    """Удаляет подписку (любой стороной). True — удалена."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM progress_subscriptions WHERE watcher_id = ? AND target_id = ?",
+            (watcher_id, target_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_my_subscriptions(watcher_id: int) -> list:
+    """За кем я слежу. Возвращает список dict с target_id, target_username, target_first_name, status, quit_date."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT s.target_id, u.username, u.first_name, u.quit_date, s.status, s.created_at
+               FROM progress_subscriptions s
+               JOIN users u ON u.user_id = s.target_id
+               WHERE s.watcher_id = ?
+               ORDER BY s.status, s.created_at DESC""",
+            (watcher_id,)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_my_watchers(target_id: int, only_confirmed: bool = False) -> list:
+    """Кто следит за мной. Возвращает список dict с watcher_id, username, first_name, status, created_at."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if only_confirmed:
+            sql = """SELECT s.watcher_id, u.username, u.first_name, s.status, s.created_at
+                     FROM progress_subscriptions s
+                     JOIN users u ON u.user_id = s.watcher_id
+                     WHERE s.target_id = ? AND s.status = 'confirmed'
+                     ORDER BY s.created_at DESC"""
+        else:
+            sql = """SELECT s.watcher_id, u.username, u.first_name, s.status, s.created_at
+                     FROM progress_subscriptions s
+                     JOIN users u ON u.user_id = s.watcher_id
+                     WHERE s.target_id = ?
+                     ORDER BY s.status, s.created_at DESC"""
+        cursor = await db.execute(sql, (target_id,))
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_confirmed_watcher_ids(target_id: int) -> list[int]:
+    """ID-шники подтверждённых наблюдателей — для рассылки уведомлений."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT watcher_id FROM progress_subscriptions WHERE target_id = ? AND status = 'confirmed'",
+            (target_id,)
+        )
+        return [r[0] for r in await cursor.fetchall()]

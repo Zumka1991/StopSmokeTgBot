@@ -10,3 +10,7 @@ class DiaryState(StatesGroup):
 
 class AIState(StatesGroup):
     waiting_for_question = State()
+
+
+class TrackingState(StatesGroup):
+    waiting_for_username = State()

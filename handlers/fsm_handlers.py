@@ -11,10 +11,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import dp, bot, client, OPENROUTER_MODEL
-from keyboards import get_main_keyboard, get_ai_keyboard
+from keyboards import get_main_keyboard, get_ai_keyboard, get_tracking_request_keyboard
 import database as db
-from states import DiaryState, AIState
-from utils import format_duration, calculate_savings, calculate_cigarettes_not_smoked
+from states import DiaryState, AIState, TrackingState
+from utils import format_duration, calculate_savings, calculate_cigarettes_not_smoked, escape_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -267,3 +267,104 @@ async def handle_ai_question(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer("Желаете задать еще один вопрос?", reply_markup=get_ai_keyboard())
+
+
+# ===== ОТСЛЕЖИВАНИЕ ПРОГРЕССА: ВВОД USERNAME =====
+
+@dp.message(TrackingState.waiting_for_username)
+async def handle_tracking_username(message: Message, state: FSMContext):
+    """Юзер ввёл @username того, кого хочет отслеживать."""
+    raw = (message.text or "").strip()
+    await state.clear()
+
+    if not raw or raw.startswith("/"):
+        await message.answer(
+            "Отменено. Чтобы попробовать снова — открой «📊 Мой прогресс».",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # Принимаем '@username', 'username', 't.me/username', 'https://t.me/username'.
+    username = raw.lstrip("@").strip()
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if username.lower().startswith(prefix):
+            username = username[len(prefix):]
+            break
+    username = username.split("?")[0].split("/")[0]
+
+    if not username or not all(c.isalnum() or c == "_" for c in username):
+        await message.answer(
+            "❌ Это не похоже на @username. Попробуй ещё раз через меню отслеживания.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    target = await db.get_user_by_username(username)
+    if not target:
+        await message.answer(
+            f"❌ Пользователь *@{escape_markdown(username)}* не найден среди тех, кто пользовался ботом.\n\n"
+            "Возможно, он ещё не запускал бота или у него нет публичного @username. "
+            "Попроси его сначала зайти в бота и поставить @username в Telegram.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    target_id = target["user_id"]
+    watcher_id = message.from_user.id
+
+    if target_id == watcher_id:
+        await message.answer(
+            "🙃 Себя отслеживать не нужно — у тебя уже есть «📊 Мой прогресс».",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    result = await db.create_subscription_request(watcher_id, target_id)
+
+    target_display = target.get("first_name") or target.get("username") or "пользователь"
+    if result == 'already_pending':
+        await message.answer(
+            f"⏳ Запрос к *{escape_markdown(target_display)}* уже отправлен. Жди ответа.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    if result == 'already_confirmed':
+        await message.answer(
+            f"✅ Ты уже отслеживаешь *{escape_markdown(target_display)}*.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # 'created' или 'resent' — шлём заявку цели.
+    watcher_user = message.from_user
+    watcher_display = watcher_user.first_name or watcher_user.username or "Пользователь"
+    watcher_at = f"@{watcher_user.username}" if watcher_user.username else f"id{watcher_user.id}"
+
+    request_text = (
+        "👁 *Запрос на отслеживание прогресса*\n\n"
+        f"Пользователь *{escape_markdown(watcher_display)}* "
+        f"({escape_markdown(watcher_at)}) хочет следить за твоим прогрессом отказа от курения.\n\n"
+        "Если ты согласишься, ему придёт уведомление, когда ты отметишь срыв. "
+        "Это работает как поддержка — бросать вместе легче.\n\n"
+        "Подтвердить?"
+    )
+    try:
+        await bot.send_message(
+            target_id,
+            request_text,
+            reply_markup=get_tracking_request_keyboard(watcher_id)
+        )
+        await message.answer(
+            f"📨 Запрос отправлен *{escape_markdown(target_display)}*. "
+            "Когда он ответит — я тебе скажу.",
+            reply_markup=get_main_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Не удалось отправить запрос отслеживания {watcher_id}->{target_id}: {e}")
+        # Откатываем заявку, чтобы юзер мог попробовать ещё раз.
+        await db.remove_subscription(watcher_id, target_id)
+        await message.answer(
+            "❌ Не удалось доставить запрос пользователю — возможно, он заблокировал бота. "
+            "Заявка отменена.",
+            reply_markup=get_main_keyboard()
+        )

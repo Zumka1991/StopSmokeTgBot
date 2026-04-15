@@ -241,9 +241,70 @@ def get_relapse_keyboard() -> InlineKeyboardMarkup:
                 text="💪 Нет, я держусь!",
                 callback_data="stay_strong"
             )
+        ],
+        [
+            InlineKeyboardButton(
+                text="👁 Отслеживание чужого срыва",
+                callback_data="track_menu"
+            )
         ]
     ])
     return keyboard
+
+
+def get_tracking_menu_keyboard(has_subs: bool, has_watchers: bool) -> InlineKeyboardMarkup:
+    """Меню системы отслеживания."""
+    rows = [
+        [InlineKeyboardButton(text="➕ Отслеживать пользователя", callback_data="track_add")],
+    ]
+    if has_subs:
+        rows.append([InlineKeyboardButton(text="📋 За кем я слежу", callback_data="track_my_subs")])
+    if has_watchers:
+        rows.append([InlineKeyboardButton(text="👀 Кто следит за мной", callback_data="track_my_watchers")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_tracking_request_keyboard(watcher_id: int) -> InlineKeyboardMarkup:
+    """Кнопки 'Принять'/'Отклонить' под входящим запросом."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"track_accept_{watcher_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"track_decline_{watcher_id}"),
+        ]
+    ])
+
+
+def get_tracking_subs_keyboard(subs: list) -> InlineKeyboardMarkup:
+    """Список 'За кем я слежу' с кнопкой отписаться у каждого."""
+    rows = []
+    for s in subs:
+        name = s.get("first_name") or s.get("username") or f"id{s['target_id']}"
+        status_icon = {"confirmed": "✅", "pending": "⏳", "declined": "🚫"}.get(s["status"], "•")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{status_icon} {name[:24]} — отписаться",
+                callback_data=f"track_unsub_{s['target_id']}"
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="track_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_tracking_watchers_keyboard(watchers: list) -> InlineKeyboardMarkup:
+    """Список 'Кто следит за мной' с кнопкой удалить."""
+    rows = []
+    for w in watchers:
+        name = w.get("first_name") or w.get("username") or f"id{w['watcher_id']}"
+        status_icon = {"confirmed": "✅", "pending": "⏳", "declined": "🚫"}.get(w["status"], "•")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{status_icon} {name[:24]} — удалить",
+                callback_data=f"track_kick_{w['watcher_id']}"
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="track_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_rating_keyboard(page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
