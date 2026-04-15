@@ -244,8 +244,11 @@ async def handle_ai_question(message: Message, state: FSMContext):
         await db.increment_ai_usage(user_id)
 
         # Конвертируем стандартный Markdown в Telegram MarkdownV2
-        # с корректным экранированием всех спецсимволов
-        ai_text_md = telegramify_markdown.markdownify(ai_text)
+        # с корректным экранированием всех спецсимволов и добавляем
+        # подпись ассистента жирным сверху.
+        ai_text_md = telegramify_markdown.markdownify(
+            f"**ИИ-Ассистент Лена**\n\n{ai_text}"
+        )
 
         # Отправляем с поддержкой MarkdownV2
         if len(ai_text_md) > 4000:
