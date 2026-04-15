@@ -17,6 +17,7 @@ from keyboards import (
     get_ai_keyboard,
     get_relapse_keyboard,
     get_rating_keyboard,
+    get_diary_menu_keyboard,
 )
 from quotes import get_random_quote, ACHIEVEMENT_MESSAGES
 from utils import format_duration, calculate_savings, calculate_cigarettes_not_smoked, escape_markdown, get_progress_bar
@@ -119,7 +120,6 @@ async def cmd_help(message: Message):
 @dp.message(F.text == "📓 Дневник")
 async def cmd_diary(message: Message):
     """Меню дневника"""
-    from keyboards import get_diary_menu_keyboard
     await message.answer(
         "📓 *Дневник*\n\n"
         "Что хотите сделать?",
