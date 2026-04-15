@@ -12,3 +12,6 @@ data/*.png
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Backup
+old_bot.py
