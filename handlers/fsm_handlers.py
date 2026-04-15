@@ -2,9 +2,9 @@
 FSM хендлеры — обработка состояний дневника и ИИ-ассистента.
 """
 import logging
-import re
-import html
 from datetime import datetime
+
+import telegramify_markdown
 
 from aiogram import F
 from aiogram.fsm.context import FSMContext
@@ -124,11 +124,11 @@ async def handle_ai_question(message: Message, state: FSMContext):
     4. Пиши информативно, чтобы человек понял суть. Если вопрос требует развернутого ответа, отвечай развернуто.
     5. Общайся на русском языке.
     6. Постарайся мотивировать пользователей на то, чтобы не сорваться.
-    7. Используй HTML-теги для форматирования: <b>жирный</b>, <i>курсив</i>. НЕ ИСПОЛЬЗУЙ Markdown (никаких ** или _).
+    7. Для форматирования используй стандартный Markdown: **жирный**, *курсив*, `код`, [ссылка](url), списки. Не используй HTML-теги.
     8. Представляйся при первом сообщении.
     """
 
-    waiting_msg = await message.answer("🤖 *Думаю...*")
+    waiting_msg = await message.answer("🤖 Думаю...")
 
     try:
         # Получаем историю переписки (последние 20 сообщений)
@@ -153,34 +153,21 @@ async def handle_ai_question(message: Message, state: FSMContext):
 
         ai_text = response.choices[0].message.content
 
-        # Экранируем HTML спецсимволы, чтобы не сломать parse_mode="HTML"
-        ai_text = html.escape(ai_text)
-
-        # 1. Возвращаем (де-экранируем) разрешенные теги, если ИИ их прислал напрямую
-        ai_text = re.sub(r"&lt;b&gt;(.*?)&lt;/b&gt;", r"<b>\1</b>", ai_text, flags=re.DOTALL | re.IGNORECASE)
-        ai_text = re.sub(r"&lt;i&gt;(.*?)&lt;/i&gt;", r"<i>\1</i>", ai_text, flags=re.DOTALL | re.IGNORECASE)
-        ai_text = re.sub(r"&lt;u&gt;(.*?)&lt;/u&gt;", r"<u>\1</u>", ai_text, flags=re.DOTALL | re.IGNORECASE)
-        ai_text = re.sub(r"&lt;s&gt;(.*?)&lt;/s&gt;", r"<s>\1</s>", ai_text, flags=re.DOTALL | re.IGNORECASE)
-
-        # 2. Преобразуем Markdown **текст** в <b>текст</b> для надежности
-        ai_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", ai_text, flags=re.DOTALL)
-        # Также преобразуем _курсив_
-        ai_text = re.sub(r"_(.*?)_", r"<i>\1</i>", ai_text, flags=re.DOTALL)
-        # 3. Преобразуем `код` и теги <code> в <b>жирный</b> по просьбе пользователя
-        ai_text = re.sub(r"`(.*?)`", r"<b>\1</b>", ai_text, flags=re.DOTALL)
-        ai_text = re.sub(r"&lt;code&gt;(.*?)&lt;/code&gt;", r"<b>\1</b>", ai_text, flags=re.DOTALL | re.IGNORECASE)
-
-        # Сохраняем ответ ассистента в БД
+        # Сохраняем оригинальный ответ ассистента (в Markdown) в БД
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
         await db.increment_ai_usage(user_id)
 
-        # Отправляем с поддержкой HTML
-        if len(ai_text) > 4000:
+        # Конвертируем стандартный Markdown в Telegram MarkdownV2
+        # с корректным экранированием всех спецсимволов
+        ai_text_md = telegramify_markdown.markdownify(ai_text)
+
+        # Отправляем с поддержкой MarkdownV2
+        if len(ai_text_md) > 4000:
             await waiting_msg.delete()
-            for i in range(0, len(ai_text), 4000):
-                await message.answer(ai_text[i:i+4000], parse_mode="HTML")
+            for i in range(0, len(ai_text_md), 4000):
+                await message.answer(ai_text_md[i:i+4000], parse_mode="MarkdownV2")
         else:
-            await waiting_msg.edit_text(ai_text, parse_mode="HTML")
+            await waiting_msg.edit_text(ai_text_md, parse_mode="MarkdownV2")
 
     except Exception as e:
         logger.error(f"Ошибка ИИ-помощника: {e}")
