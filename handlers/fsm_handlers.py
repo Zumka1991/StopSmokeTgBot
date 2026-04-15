@@ -156,13 +156,19 @@ async def handle_ai_question(message: Message, state: FSMContext):
         # Экранируем HTML спецсимволы, чтобы не сломать parse_mode="HTML"
         ai_text = html.escape(ai_text)
 
-        # Преобразуем **текст** в <b>текст</b> для надежности жирного шрифта в HTML
-        ai_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", ai_text)
+        # 1. Возвращаем (де-экранируем) разрешенные теги, если ИИ их прислал напрямую
+        ai_text = re.sub(r"&lt;b&gt;(.*?)&lt;/b&gt;", r"<b>\1</b>", ai_text, flags=re.DOTALL | re.IGNORECASE)
+        ai_text = re.sub(r"&lt;i&gt;(.*?)&lt;/i&gt;", r"<i>\1</i>", ai_text, flags=re.DOTALL | re.IGNORECASE)
+        ai_text = re.sub(r"&lt;u&gt;(.*?)&lt;/u&gt;", r"<u>\1</u>", ai_text, flags=re.DOTALL | re.IGNORECASE)
+        ai_text = re.sub(r"&lt;s&gt;(.*?)&lt;/s&gt;", r"<s>\1</s>", ai_text, flags=re.DOTALL | re.IGNORECASE)
+
+        # 2. Преобразуем Markdown **текст** в <b>текст</b> для надежности
+        ai_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", ai_text, flags=re.DOTALL)
         # Также преобразуем _курсив_
-        ai_text = re.sub(r"_(.*?)_", r"<i>\1</i>", ai_text)
-        # Преобразуем `код` и <code>код</code> в <b>жирный</b> по просьбе пользователя
-        ai_text = re.sub(r"`(.*?)`", r"<b>\1</b>", ai_text)
-        ai_text = re.sub(r"&lt;code&gt;(.*?)&lt;/code&gt;", r"<b>\1</b>", ai_text)
+        ai_text = re.sub(r"_(.*?)_", r"<i>\1</i>", ai_text, flags=re.DOTALL)
+        # 3. Преобразуем `код` и теги <code> в <b>жирный</b> по просьбе пользователя
+        ai_text = re.sub(r"`(.*?)`", r"<b>\1</b>", ai_text, flags=re.DOTALL)
+        ai_text = re.sub(r"&lt;code&gt;(.*?)&lt;/code&gt;", r"<b>\1</b>", ai_text, flags=re.DOTALL | re.IGNORECASE)
 
         # Сохраняем ответ ассистента в БД
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
