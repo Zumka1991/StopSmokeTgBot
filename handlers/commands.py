@@ -509,3 +509,71 @@ async def cmd_settings(message: Message):
 _Нажмите кнопку для изменения:_
 """
     await message.answer(settings_text, reply_markup=get_settings_keyboard(notifications, rating_visible))
+
+
+@dp.message(Command("stopw"))
+async def cmd_stopw(message: Message):
+    """Toggle блокировки отслеживания. При включении — удаляет всех текущих
+    наблюдателей и шлёт каждому уведомление, что цель закрыла свой прогресс.
+    """
+    user_id = message.from_user.id
+    user = await db.get_user(user_id)
+    if not user:
+        await message.answer("Сначала запусти бота: /start", reply_markup=get_main_keyboard())
+        return
+
+    currently_blocked = await db.is_tracking_blocked(user_id)
+
+    if currently_blocked:
+        # Снимаем блок.
+        await db.set_tracking_blocked(user_id, False)
+        await message.answer(
+            "✅ *Отслеживание снова разрешено*\n\n"
+            "Теперь другие пользователи могут отправлять тебе запросы на отслеживание "
+            "твоего прогресса. Старые подписки не восстанавливаются — если кто-то "
+            "хочет следить, он отправит запрос заново.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # Включаем блок: чистим всех наблюдателей и уведомляем их.
+    await db.set_tracking_blocked(user_id, True)
+    purged = await db.purge_watchers(user_id)
+
+    target_display = message.from_user.first_name or message.from_user.username or "Пользователь"
+    target_handle = f"@{message.from_user.username}" if message.from_user.username else ""
+
+    notified = 0
+    failed = 0
+    for wid in purged:
+        try:
+            handle_part = f" ({escape_markdown(target_handle)})" if target_handle else ""
+            await bot.send_message(
+                wid,
+                f"🚫 *Отслеживание прекращено*\n\n"
+                f"Пользователь *{escape_markdown(target_display)}*{handle_part} "
+                "запретил отслеживание своего прогресса. "
+                "Подписка снята автоматически.\n\n"
+                "_Если он передумает и снова откроет приём заявок, ты сможешь "
+                "отправить новый запрос._"
+            )
+            notified += 1
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Не удалось уведомить watcher={wid} о блоке target={user_id}: {e}")
+
+    if purged:
+        suffix = (
+            f"\n\nТекущие подписки сняты: *{len(purged)}*. "
+            f"Уведомлено: {notified}" + (f", не доставлено: {failed}" if failed else "") + "."
+        )
+    else:
+        suffix = "\n\nАктивных подписок не было."
+
+    await message.answer(
+        "🛡 *Отслеживание запрещено*\n\n"
+        "Новые запросы на отслеживание твоего прогресса будут автоматически "
+        "отклоняться. Чтобы снова разрешить — отправь /stopw ещё раз."
+        + suffix,
+        reply_markup=get_main_keyboard()
+    )

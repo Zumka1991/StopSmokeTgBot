@@ -65,6 +65,11 @@ async def init_db():
                 "ALTER TABLE users ADD COLUMN ai_unlocked INTEGER DEFAULT 0"
             )
         except Exception: pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN tracking_blocked INTEGER DEFAULT 0"
+            )
+        except Exception: pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS achievements (
@@ -704,9 +709,18 @@ async def create_subscription_request(watcher_id: int, target_id: int) -> str:
     """Создаёт/обновляет заявку на отслеживание.
 
     Возвращает: 'created' — новая заявка, 'already_pending' — уже ждёт ответа,
-    'already_confirmed' — уже подтверждено, 'resent' — была declined, шлём заново.
+    'already_confirmed' — уже подтверждено, 'resent' — была declined, шлём заново,
+    'blocked' — цель запретила отслеживание (флаг tracking_blocked).
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT tracking_blocked FROM users WHERE user_id = ?",
+            (target_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return 'blocked'
+
         cursor = await db.execute(
             "SELECT status FROM progress_subscriptions WHERE watcher_id = ? AND target_id = ?",
             (watcher_id, target_id)
@@ -808,3 +822,43 @@ async def get_confirmed_watcher_ids(target_id: int) -> list[int]:
             (target_id,)
         )
         return [r[0] for r in await cursor.fetchall()]
+
+
+async def is_tracking_blocked(user_id: int) -> bool:
+    """Запретил ли пользователь отслеживание себя."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT tracking_blocked FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0])
+
+
+async def set_tracking_blocked(user_id: int, blocked: bool) -> None:
+    """Поставить/снять флаг блокировки отслеживания."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET tracking_blocked = ? WHERE user_id = ?",
+            (1 if blocked else 0, user_id)
+        )
+        await db.commit()
+
+
+async def purge_watchers(target_id: int) -> list[int]:
+    """Удаляет все подписки на target_id (любого статуса).
+    Возвращает список watcher_id, которым нужно сообщить об отмене.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT watcher_id FROM progress_subscriptions WHERE target_id = ?",
+            (target_id,)
+        )
+        watcher_ids = [r[0] for r in await cursor.fetchall()]
+        if watcher_ids:
+            await db.execute(
+                "DELETE FROM progress_subscriptions WHERE target_id = ?",
+                (target_id,)
+            )
+            await db.commit()
+        return watcher_ids

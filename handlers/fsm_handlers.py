@@ -322,6 +322,13 @@ async def handle_tracking_username(message: Message, state: FSMContext):
     result = await db.create_subscription_request(watcher_id, target_id)
 
     target_display = target.get("first_name") or target.get("username") or "пользователь"
+    if result == 'blocked':
+        await message.answer(
+            f"🚫 *{escape_markdown(target_display)}* запретил отслеживание своего прогресса. "
+            "Уважай его решение — попробуй спросить лично.",
+            reply_markup=get_main_keyboard()
+        )
+        return
     if result == 'already_pending':
         await message.answer(
             f"⏳ Запрос к *{escape_markdown(target_display)}* уже отправлен. Жди ответа.",
@@ -341,12 +348,14 @@ async def handle_tracking_username(message: Message, state: FSMContext):
     watcher_at = f"@{watcher_user.username}" if watcher_user.username else f"id{watcher_user.id}"
 
     request_text = (
-        "👁 *Запрос на отслеживание прогресса*\n\n"
+        "👥 *Запрос на отслеживание прогресса*\n\n"
         f"Пользователь *{escape_markdown(watcher_display)}* "
         f"({escape_markdown(watcher_at)}) хочет следить за твоим прогрессом отказа от курения.\n\n"
-        "Если ты согласишься, ему придёт уведомление, когда ты отметишь срыв. "
-        "Это работает как поддержка — бросать вместе легче.\n\n"
-        "Подтвердить?"
+        "Если ты согласишься:\n"
+        "• он будет видеть твою статистику (сколько дней без сигарет, сэкономлено и т.д.);\n"
+        "• ему придёт уведомление, если ты отметишь срыв — чтобы он мог поддержать.\n\n"
+        "Бросать вместе легче. Подтвердить?\n\n"
+        "_В любой момент можешь запретить отслеживание командой_ /stopw."
     )
     try:
         await bot.send_message(

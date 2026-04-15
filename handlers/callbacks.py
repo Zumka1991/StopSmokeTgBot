@@ -26,6 +26,7 @@ from keyboards import (
     get_tracking_menu_keyboard,
     get_tracking_subs_keyboard,
     get_tracking_watchers_keyboard,
+    get_friend_progress_keyboard,
 )
 from quotes import get_random_quote
 from share_card import create_share_card
@@ -791,22 +792,80 @@ async def callback_track_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     subs = await db.get_my_subscriptions(user_id)
     watchers = await db.get_my_watchers(user_id)
+    blocked = await db.is_tracking_blocked(user_id)
     confirmed_subs = sum(1 for s in subs if s["status"] == "confirmed")
     pending_subs = sum(1 for s in subs if s["status"] == "pending")
     confirmed_watchers = sum(1 for w in watchers if w["status"] == "confirmed")
 
+    block_line = (
+        "🚫 *Приём наблюдателей: ВЫКЛ* — новые запросы отклоняются автоматически."
+        if blocked
+        else "🛡 *Приём наблюдателей: ВКЛ* — другие могут отправлять тебе запросы."
+    )
+
     text = (
-        "👁 *Отслеживание прогресса*\n\n"
-        "Это про взаимную поддержку: ты можешь следить за прогрессом другого "
-        "человека, и тебе придёт уведомление, если он сорвётся — чтобы ты "
-        "вовремя его поддержал.\n\n"
+        "👥 *Отслеживание прогресса друга*\n\n"
+        "Взаимная поддержка: ты можешь следить за прогрессом друга и видеть "
+        "его статистику, а если он сорвётся — тебе придёт уведомление, чтобы "
+        "вовремя поддержать.\n\n"
         f"📋 Ты следишь: *{confirmed_subs}* (ожидают ответа: {pending_subs})\n"
-        f"👀 За тобой следят: *{confirmed_watchers}*\n\n"
+        f"👀 За тобой следят: *{confirmed_watchers}*\n"
+        f"{block_line}\n\n"
         "Что хочешь сделать?"
     )
-    kb = get_tracking_menu_keyboard(has_subs=bool(subs), has_watchers=bool(watchers))
+    kb = get_tracking_menu_keyboard(
+        has_subs=bool(subs),
+        has_watchers=bool(watchers),
+        blocked=blocked,
+    )
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
+
+
+@dp.callback_query(F.data == "track_toggle_block")
+async def callback_track_toggle_block(callback: CallbackQuery):
+    """Переключение блокировки прямо из меню (эквивалент /stopw)."""
+    user_id = callback.from_user.id
+    currently_blocked = await db.is_tracking_blocked(user_id)
+
+    if currently_blocked:
+        await db.set_tracking_blocked(user_id, False)
+        await callback.message.answer(
+            "✅ *Отслеживание снова разрешено.* Старые подписки не возвращаются автоматически.",
+            reply_markup=get_main_keyboard()
+        )
+        await callback.answer()
+        return
+
+    await db.set_tracking_blocked(user_id, True)
+    purged = await db.purge_watchers(user_id)
+    target_display = callback.from_user.first_name or callback.from_user.username or "Пользователь"
+    target_handle = f"@{callback.from_user.username}" if callback.from_user.username else ""
+
+    notified = 0
+    for wid in purged:
+        try:
+            handle_part = f" ({escape_markdown(target_handle)})" if target_handle else ""
+            await bot.send_message(
+                wid,
+                f"🚫 *Отслеживание прекращено*\n\n"
+                f"Пользователь *{escape_markdown(target_display)}*{handle_part} "
+                "запретил отслеживание своего прогресса. Подписка снята автоматически."
+            )
+            notified += 1
+        except Exception as e:
+            logger.warning(f"toggle_block: не уведомили watcher={wid}: {e}")
+
+    suffix = (
+        f" Сняли {len(purged)} подписок, уведомили {notified}."
+        if purged else " Активных подписок не было."
+    )
+    await callback.message.answer(
+        "🛡 *Отслеживание запрещено.*" + suffix
+        + "\n\nСнять блок: /stopw или эта же кнопка в меню.",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer("Готово")
 
 
 @dp.callback_query(F.data == "track_add")
@@ -824,11 +883,14 @@ async def callback_track_add(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "track_my_subs")
 async def callback_track_my_subs(callback: CallbackQuery):
     """Список 'За кем я слежу'."""
-    subs = await db.get_my_subscriptions(callback.from_user.id)
+    user_id = callback.from_user.id
+    subs = await db.get_my_subscriptions(user_id)
     if not subs:
+        watchers = await db.get_my_watchers(user_id)
+        blocked = await db.is_tracking_blocked(user_id)
         await callback.message.answer(
             "📋 Ты пока ни за кем не следишь.",
-            reply_markup=get_tracking_menu_keyboard(False, False)
+            reply_markup=get_tracking_menu_keyboard(False, bool(watchers), blocked)
         )
         await callback.answer()
         return
@@ -847,10 +909,12 @@ async def callback_track_my_subs(callback: CallbackQuery):
                 qd = datetime.fromisoformat(s["quit_date"])
                 d = datetime.now() - qd
                 if d.total_seconds() > 0:
-                    suffix = f" — без сигарет {format_duration(d)}"
+                    suffix = f" — {format_duration(d)} без сигарет"
             except Exception:
                 pass
         lines.append(f"• *{escape_markdown(name)}* — {status_label}{escape_markdown(suffix)}")
+
+    lines.append("\n_Жми на друга в списке ниже, чтобы посмотреть его прогресс._")
 
     await callback.message.answer(
         "\n".join(lines),
@@ -859,14 +923,98 @@ async def callback_track_my_subs(callback: CallbackQuery):
     await callback.answer()
 
 
+@dp.callback_query(F.data.startswith("track_view_"))
+async def callback_track_view(callback: CallbackQuery):
+    """Карточка прогресса друга — доступна только для confirmed-подписок."""
+    try:
+        target_id = int(callback.data.removeprefix("track_view_"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+
+    watcher_id = callback.from_user.id
+
+    # Проверяем, что подписка существует и confirmed.
+    subs = await db.get_my_subscriptions(watcher_id)
+    sub = next((s for s in subs if s["target_id"] == target_id), None)
+    if not sub:
+        await callback.answer("Подписка не найдена", show_alert=True)
+        return
+    if sub["status"] != "confirmed":
+        await callback.answer("Доступ к статистике появится после подтверждения", show_alert=True)
+        return
+
+    # Если за время подписки цель включила блок — закрываем доступ.
+    if await db.is_tracking_blocked(target_id):
+        await db.remove_subscription(watcher_id, target_id)
+        await callback.message.answer(
+            "🚫 Этот пользователь запретил отслеживание. Подписка снята.",
+            reply_markup=get_main_keyboard()
+        )
+        await callback.answer()
+        return
+
+    target_user = await db.get_user(target_id)
+    if not target_user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    name = target_user.get("first_name") or target_user.get("username") or "Друг"
+    handle = f"@{target_user['username']}" if target_user.get("username") else ""
+    handle_part = f" ({escape_markdown(handle)})" if handle else ""
+
+    quit_date_raw = target_user.get("quit_date")
+    if not quit_date_raw:
+        text = (
+            f"📊 *Прогресс: {escape_markdown(name)}*{handle_part}\n\n"
+            "_Друг ещё не указал дату отказа от курения._\n"
+            "Когда укажет — здесь появится статистика."
+        )
+    else:
+        quit_date = datetime.fromisoformat(quit_date_raw)
+        delta = datetime.now() - quit_date
+        if delta.total_seconds() < 0:
+            text = (
+                f"📊 *Прогресс: {escape_markdown(name)}*{handle_part}\n\n"
+                f"📅 Дата отказа запланирована: *{quit_date.strftime('%d.%m.%Y')}*\n"
+                "Друг ещё не начал — подбодри его!"
+            )
+        else:
+            duration = format_duration(delta)
+            savings = calculate_savings(target_user, delta)
+            cigarettes = calculate_cigarettes_not_smoked(target_user, delta)
+            stats = await db.get_user_stats(target_id)
+            attempts = stats.get("relapse_count", 0) + 1
+            text = (
+                f"📊 *Прогресс: {escape_markdown(name)}*{handle_part}\n\n"
+                f"🕐 *Без сигарет:* {duration}\n"
+                f"📅 *Дата отказа:* {quit_date.strftime('%d.%m.%Y')}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"💰 *Сэкономлено:* {savings:,.0f}₽\n"
+                f"🚬 *Не выкурено:* {cigarettes:,} сигарет\n"
+                f"🔄 *Попытка №:* {attempts}\n\n"
+                "_Если есть возможность — напиши пару слов поддержки, "
+                "это помогает гораздо больше, чем кажется._"
+            )
+
+    await callback.message.answer(
+        text,
+        reply_markup=get_friend_progress_keyboard(target_id)
+    )
+    await callback.answer()
+
+
 @dp.callback_query(F.data == "track_my_watchers")
 async def callback_track_my_watchers(callback: CallbackQuery):
     """Список 'Кто следит за мной'."""
-    watchers = await db.get_my_watchers(callback.from_user.id)
+    user_id = callback.from_user.id
+    watchers = await db.get_my_watchers(user_id)
     if not watchers:
+        subs = await db.get_my_subscriptions(user_id)
+        blocked = await db.is_tracking_blocked(user_id)
         await callback.message.answer(
             "👀 За тобой пока никто не следит.",
-            reply_markup=get_tracking_menu_keyboard(False, False)
+            reply_markup=get_tracking_menu_keyboard(bool(subs), False, blocked)
         )
         await callback.answer()
         return

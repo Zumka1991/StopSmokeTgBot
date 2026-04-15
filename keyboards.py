@@ -244,7 +244,7 @@ def get_relapse_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text="👁 Отслеживание чужого срыва",
+                text="👥 Отслеживание прогресса друга",
                 callback_data="track_menu"
             )
         ]
@@ -252,15 +252,17 @@ def get_relapse_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
-def get_tracking_menu_keyboard(has_subs: bool, has_watchers: bool) -> InlineKeyboardMarkup:
+def get_tracking_menu_keyboard(has_subs: bool, has_watchers: bool, blocked: bool) -> InlineKeyboardMarkup:
     """Меню системы отслеживания."""
     rows = [
-        [InlineKeyboardButton(text="➕ Отслеживать пользователя", callback_data="track_add")],
+        [InlineKeyboardButton(text="➕ Отслеживать друга", callback_data="track_add")],
     ]
     if has_subs:
         rows.append([InlineKeyboardButton(text="📋 За кем я слежу", callback_data="track_my_subs")])
     if has_watchers:
         rows.append([InlineKeyboardButton(text="👀 Кто следит за мной", callback_data="track_my_watchers")])
+    block_label = "🛡 Снова разрешить отслеживание" if blocked else "🚫 Запретить отслеживание себя"
+    rows.append([InlineKeyboardButton(text=block_label, callback_data="track_toggle_block")])
     rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -276,19 +278,37 @@ def get_tracking_request_keyboard(watcher_id: int) -> InlineKeyboardMarkup:
 
 
 def get_tracking_subs_keyboard(subs: list) -> InlineKeyboardMarkup:
-    """Список 'За кем я слежу' с кнопкой отписаться у каждого."""
+    """Список 'За кем я слежу'.
+
+    Для confirmed — кнопка-карточка (открывает прогресс друга).
+    Для pending/declined — кнопка отозвать запрос.
+    """
     rows = []
     for s in subs:
         name = s.get("first_name") or s.get("username") or f"id{s['target_id']}"
-        status_icon = {"confirmed": "✅", "pending": "⏳", "declined": "🚫"}.get(s["status"], "•")
-        rows.append([
-            InlineKeyboardButton(
-                text=f"{status_icon} {name[:24]} — отписаться",
-                callback_data=f"track_unsub_{s['target_id']}"
-            )
-        ])
+        if s["status"] == "confirmed":
+            label = f"📊 {name[:28]} — посмотреть прогресс"
+            cb = f"track_view_{s['target_id']}"
+        elif s["status"] == "pending":
+            label = f"⏳ {name[:24]} — отозвать запрос"
+            cb = f"track_unsub_{s['target_id']}"
+        else:  # declined
+            label = f"🚫 {name[:24]} — убрать из списка"
+            cb = f"track_unsub_{s['target_id']}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
     rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="track_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_friend_progress_keyboard(target_id: int) -> InlineKeyboardMarkup:
+    """Под карточкой прогресса друга — обновить, отписаться, назад."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Обновить", callback_data=f"track_view_{target_id}"),
+            InlineKeyboardButton(text="✖ Отписаться", callback_data=f"track_unsub_{target_id}"),
+        ],
+        [InlineKeyboardButton(text="◀️ К списку", callback_data="track_my_subs")]
+    ])
 
 
 def get_tracking_watchers_keyboard(watchers: list) -> InlineKeyboardMarkup:
