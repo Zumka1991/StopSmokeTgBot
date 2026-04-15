@@ -522,8 +522,24 @@ async def get_bot_stats() -> dict:
         cursor = await db.execute('SELECT COUNT(DISTINCT referred_by) FROM users WHERE referred_by IS NOT NULL')
         users_with_referrals = (await cursor.fetchone())[0]
 
-        cursor = await db.execute('SELECT COUNT(*) FROM achievements')
-        total_achievements = (await cursor.fetchone())[0]
+        # Достижения считаем динамически: таблица achievements не наполняется,
+        # реальные ачивки рассчитываются от quit_date по тем же порогам, что и в /achievements.
+        # Пороги в минутах (синхронизировать с handlers/commands.py::cmd_achievements).
+        thresholds_minutes = [
+            60, 720, 1440, 2880, 4320, 10080, 20160, 43200,
+            129600, 259200, 525600, 1051200, 2628000, 5256000,
+        ]
+        # Сумма пройденных порогов по всем пользователям с quit_date.
+        # (julianday('now') - julianday(quit_date)) * 1440 = прошло минут.
+        # Каждое сравнение в SQLite даёт 0/1, суммируем.
+        sum_expr = " + ".join(
+            f"((julianday('now') - julianday(quit_date)) * 1440 >= {m})"
+            for m in thresholds_minutes
+        )
+        cursor = await db.execute(
+            f"SELECT COALESCE(SUM({sum_expr}), 0) FROM users WHERE quit_date IS NOT NULL"
+        )
+        total_achievements = (await cursor.fetchone())[0] or 0
 
         cursor = await db.execute('SELECT COUNT(*) FROM diary_entries')
         diary_entries = (await cursor.fetchone())[0]
