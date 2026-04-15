@@ -3,6 +3,7 @@ Command хендлеры — /start, /help, /progress, /rating, /stats, /setting
 """
 import logging
 import traceback
+import asyncio
 from datetime import datetime
 
 from aiogram import F
@@ -125,6 +126,22 @@ async def cmd_diary(message: Message):
         "Что хотите сделать?",
         reply_markup=get_diary_menu_keyboard()
     )
+
+
+@dp.message(Command("mail"))
+async def cmd_mail(message: Message, command: CommandObject):
+    """Рассылка сообщения всем пользователям (только для админов)"""
+    if not is_admin(message.from_user.username):
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
+
+    if not command.args:
+        await message.answer("❌ Введите текст рассылки после команды.\nПример: `/mail Всем привет!`")
+        return
+
+    from scheduler import send_broadcast_mail
+    await message.answer(f"🚀 Рассылка запущена...")
+    asyncio.create_task(send_broadcast_mail(message.from_user.id, command.args))
 
 
 @dp.message(Command("visibleall"))
