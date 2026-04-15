@@ -2,6 +2,8 @@
 FSM хендлеры — обработка состояний дневника и ИИ-ассистента.
 """
 import logging
+import re
+import html
 from datetime import datetime
 
 from aiogram import F
@@ -150,6 +152,14 @@ async def handle_ai_question(message: Message, state: FSMContext):
         )
 
         ai_text = response.choices[0].message.content
+
+        # Экранируем HTML спецсимволы, чтобы не сломать parse_mode="HTML"
+        ai_text = html.escape(ai_text)
+
+        # Преобразуем **текст** в <b>текст</b> для надежности жирного шрифта в HTML
+        ai_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", ai_text)
+        # Также преобразуем _курсив_
+        ai_text = re.sub(r"_(.*?)_", r"<i>\1</i>", ai_text)
 
         # Сохраняем ответ ассистента в БД
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
