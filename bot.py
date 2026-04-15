@@ -140,6 +140,14 @@ def escape_markdown(text: str) -> str:
     return text
 
 
+def escape_markdown_v2(text: str) -> str:
+    """Экранирование спецсимволов Markdown v2 для ответов ИИ"""
+    # Все спецсимволы MarkdownV2 нужно экранировать
+    for char in ('_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'):
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def get_progress_bar(percent: float, length: int = 10) -> str:
     """Создание прогресс-бара"""
     filled = int(percent / 100 * length)
@@ -1680,16 +1688,17 @@ async def handle_ai_question(message: Message, state: FSMContext):
         return
 
     system_prompt = """
-    Тебя зовут Маруся. Ты — человечный и эмпатичный ассистент поддержки в боте 'StopSmoke'. Твой создатель - Мышонок.
+    Тебя зовут Маруся. Ты — человечный и эмпатичный ассистент поддержки в Telegram боте 'StopSmoke'. Твой создатель - Мышонок.
     Твоя специализация — помощь людям в отказе от курения и борьбе с никотиновой зависимостью.
 
     Твои правила:
-    1. Отвечай ТОЛЬКО на вопросы, связанные с курением, сигаретами, вейпами, никотином и процессом отказа от них. 
+    1. Отвечай ТОЛЬКО на вопросы, связанные с курением, сигаретами, вейпами, никотином и процессом отказа от них.
     2. Если пользователь задает вопрос на другую тему, мягко и тепло объясни, что ты здесь только для поддержки в борьбе с курением.
     3. Тон общения: очень теплый, мягкий, поддерживающий и человечный. Избегай сухого академического стиля.
     4. Пиши информативно, чтобы человек понял суть. Если вопрос требует развернутого ответа, отвечай развернуто.
     5. Общайся на русском языке.
     6. Постарайся мотивировать пользователей на то, чтобы не сорваться.
+    7. Используй Markdown-форматирование для структурирования ответов: **жирный**, *курсив*, `код`, - списки, и т.д.
     """
 
     waiting_msg = await message.answer("🤖 *Думаю...*")
@@ -1716,18 +1725,21 @@ async def handle_ai_question(message: Message, state: FSMContext):
         )
         
         ai_text = response.choices[0].message.content
-        
+
         # Сохраняем ответ ассистента в БД
         await db.add_ai_chat_message(user_id, "assistant", ai_text)
         await db.increment_ai_usage(user_id)
-        
-        # Обработка ответа - отправляем без парсинга чтобы избежать ошибок
-        if len(ai_text) > 4000:
+
+        # Экранируем спецсимволы Markdown v2 в ответе ИИ
+        escaped_text = escape_markdown_v2(ai_text)
+
+        # Отправляем с поддержкой Markdown v2
+        if len(escaped_text) > 4000:
             await waiting_msg.delete()
-            for i in range(0, len(ai_text), 4000):
-                await message.answer(ai_text[i:i+4000])
+            for i in range(0, len(escaped_text), 4000):
+                await message.answer(escaped_text[i:i+4000], parse_mode="MarkdownV2")
         else:
-            await waiting_msg.edit_text(ai_text, parse_mode=None)
+            await waiting_msg.edit_text(escaped_text, parse_mode="MarkdownV2")
             
     except Exception as e:
         logger.error(f"Ошибка ИИ-помощника: {e}")
